@@ -443,7 +443,7 @@ services:
     volumes:
       - ./data:/data
     expose:
-      - "8080"
+      - "8901"
     networks:
       - proxy
 
@@ -457,7 +457,7 @@ The final image name and environment variables will be defined when the applicat
 In Nginx Proxy Manager:
 
 1. Create a Proxy Host such as `focus.example.net`.
-2. Forward it to the container name and internal port `8080` on the shared Docker network.
+2. Forward it to the container name and internal port `8901` on the shared Docker network.
 3. Issue or select a valid TLS certificate.
 4. Enable Force SSL and HTTP/2.
 5. Do not expose the dashboard container's port directly to the internet.

@@ -29,7 +29,7 @@ From the repository directory on the NAS:
 docker compose up -d --build
 ```
 
-The application is available to other containers as `operation-crackdown:8080`. The Compose file intentionally does not publish that port on the NAS host.
+The application listens on port `8901` inside the container and publishes it as port `8901` on the NAS. Other containers on the shared proxy network can reach it as `operation-crackdown:8901`; it is also reachable directly as `http://NAS-IP:8901` for local troubleshooting.
 
 ## Configure Nginx Proxy Manager
 
@@ -38,7 +38,7 @@ Create a Proxy Host with:
 - Domain: the hostname used in `APP_BASE_URL`.
 - Scheme: `http`.
 - Forward hostname: `operation-crackdown`.
-- Forward port: `8080`.
+- Forward port: `8901`.
 - WebSocket support: optional; the current clients use polling.
 - SSL certificate: a valid certificate for the hostname.
 - Force SSL: enabled.
@@ -83,4 +83,3 @@ The container exposes `/healthz` internally and defines a Docker health check. A
 ```json
 {"ok":true,"version":"0.1.0"}
 ```
-

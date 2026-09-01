@@ -9,11 +9,11 @@ services:
       HOUSEHOLD_TIMEZONE: ${HOUSEHOLD_TIMEZONE:-America/Chicago}
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
       DATA_DIR: /data
-      PORT: 8080
+      PORT: 8901
     volumes:
       - ./data:/data
-    expose:
-      - "8080"
+    ports:
+      - "8901:8901"
     networks:
       - proxy
 
