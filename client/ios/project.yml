@@ -1,0 +1,37 @@
+name: OperationCrackdown
+options:
+  bundleIdPrefix: com.operationcrackdown
+  deploymentTarget:
+    iOS: "17.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    DEVELOPMENT_TEAM: ""
+targets:
+  OperationCrackdown:
+    type: application
+    platform: iOS
+    sources:
+      - path: OperationCrackdown
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.operationcrackdown.client
+        CODE_SIGN_ENTITLEMENTS: OperationCrackdown/OperationCrackdown.entitlements
+        INFOPLIST_KEY_CFBundleDisplayName: Operation Crackdown
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: true
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: true
+        INFOPLIST_KEY_UILaunchScreen_Generation: true
+    dependencies:
+      - target: DeviceActivityMonitor
+  DeviceActivityMonitor:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: DeviceActivityMonitor
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.operationcrackdown.client.monitor
+        CODE_SIGN_ENTITLEMENTS: DeviceActivityMonitor/DeviceActivityMonitor.entitlements
+        INFOPLIST_KEY_NSExtension_NSExtensionPointIdentifier: com.apple.deviceactivity.monitor-extension
+        INFOPLIST_KEY_NSExtension_NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).MonitorExtension

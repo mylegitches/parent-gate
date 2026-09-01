@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101828">
+  <title>Operation Crackdown</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <section id="auth-view" class="auth-card" hidden>
+      <div class="brand-mark">OC</div>
+      <h1>Operation Crackdown</h1>
+      <p id="auth-copy" class="muted"></p>
+      <form id="auth-form">
+        <label>Username<input name="username" autocomplete="username" required minlength="3"></label>
+        <label id="display-name-row" hidden>Display name<input name="displayName" autocomplete="name"></label>
+        <label>Password<input name="password" type="password" autocomplete="current-password" required minlength="10"></label>
+        <label id="pin-row" hidden>Local parent PIN<input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4,8}" autocomplete="new-password"></label>
+        <button class="primary wide" type="submit">Continue</button>
+        <p id="auth-error" class="error" role="alert"></p>
+      </form>
+    </section>
+
+    <section id="dashboard" hidden>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">HOUSEHOLD FOCUS</p>
+          <h1>Operation Crackdown</h1>
+        </div>
+        <div class="top-actions">
+          <button id="refresh-button" class="secondary">Refresh</button>
+          <button id="enroll-button" class="primary">Add device</button>
+          <button id="parent-button" class="secondary">Add parent</button>
+          <button id="logout-button" class="quiet">Sign out</button>
+        </div>
+      </header>
+
+      <div id="notice" class="notice" hidden></div>
+      <section id="empty-state" class="empty" hidden>
+        <h2>No enrolled devices yet</h2>
+        <p>Create an enrollment code, then run the client installer on a device.</p>
+        <button class="primary" data-action="open-enroll">Create enrollment code</button>
+      </section>
+      <section id="devices" class="device-grid" aria-live="polite"></section>
+
+      <details class="audit-panel">
+        <summary>Recent activity</summary>
+        <div id="audit-list" class="audit-list"></div>
+      </details>
+    </section>
+  </main>
+
+  <dialog id="enroll-dialog">
+    <form method="dialog" class="dialog-card">
+      <button class="dialog-close" value="cancel" aria-label="Close">×</button>
+      <p class="eyebrow">NEW CLIENT</p>
+      <h2>Enroll a device</h2>
+      <div id="enrollment-result">
+        <p>Create a one-time code that remains valid for ten minutes.</p>
+        <button id="create-code-button" class="primary" type="button">Create code</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="parent-dialog">
+    <form id="parent-form" class="dialog-card">
+      <button class="dialog-close" type="button" data-close-dialog="parent-dialog" aria-label="Close">×</button>
+      <p class="eyebrow">PARENT ACCESS</p>
+      <h2>Add another parent</h2>
+      <label>Display name<input name="displayName" required></label>
+      <label>Username<input name="username" required minlength="3"></label>
+      <label>Dashboard password<input name="password" type="password" required minlength="10"></label>
+      <label>Local PIN<input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4,8}" required></label>
+      <button class="primary" type="submit">Add parent</button>
+      <p id="parent-error" class="error"></p>
+    </form>
+  </dialog>
+
+  <template id="device-template">
+    <article class="device-card">
+      <header class="device-header">
+        <div>
+          <div class="device-title-row"><span class="status-dot"></span><h2 class="device-name"></h2></div>
+          <p class="device-meta muted"></p>
+        </div>
+        <span class="policy-status"></span>
+      </header>
+
+      <div class="profile-block">
+        <div class="section-heading">
+          <h3>Focus mode</h3>
+          <label class="duration-label">For
+            <select class="duration-select">
+              <option value="30">30 minutes</option>
+              <option value="60" selected>1 hour</option>
+              <option value="120">2 hours</option>
+              <option value="0">Until changed</option>
+            </select>
+          </label>
+        </div>
+        <div class="segmented profile-buttons">
+          <button data-profile="normal">Normal</button>
+          <button data-profile="homework">Homework</button>
+          <button data-profile="deep-focus">Deep Focus</button>
+        </div>
+      </div>
+
+      <section class="category-block">
+        <div class="section-heading">
+          <div><p class="eyebrow">CATEGORY</p><h3>Streaming</h3></div>
+          <div class="button-pair">
+            <button class="small allow" data-category-action="allow">Allow all</button>
+            <button class="small block" data-category-action="block">Block all</button>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h3>Services</h3>
+        <div class="service-list"></div>
+      </section>
+
+      <details class="targets-panel">
+        <summary>Discovered application targets <span class="target-count"></span></summary>
+        <p class="muted target-help">Assign a running application to the profiles where it should be blocked. Only application identity is reported—never window titles or content.</p>
+        <div class="targets-list"></div>
+      </details>
+    </article>
+  </template>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
+

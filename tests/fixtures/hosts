@@ -1,0 +1,2 @@
+# Test hosts file used by the Windows client integration check.
+127.0.0.1 localhost

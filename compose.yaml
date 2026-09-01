@@ -1,0 +1,22 @@
+services:
+  dashboard:
+    build: .
+    image: operation-crackdown:local
+    container_name: operation-crackdown
+    restart: unless-stopped
+    environment:
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
+      HOUSEHOLD_TIMEZONE: ${HOUSEHOLD_TIMEZONE:-America/Chicago}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      DATA_DIR: /data
+      PORT: 8080
+    volumes:
+      - ./data:/data
+    expose:
+      - "8080"
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true

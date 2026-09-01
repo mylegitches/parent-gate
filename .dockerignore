@@ -1,0 +1,7 @@
+.git
+.gitignore
+data
+client
+tests
+*.log
+
