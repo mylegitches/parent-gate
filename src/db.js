@@ -132,6 +132,7 @@ function migrate(db) {
       source TEXT NOT NULL,
       parent_id TEXT REFERENCES parents(id),
       base_revision INTEGER,
+      message TEXT,
       status TEXT NOT NULL DEFAULT 'accepted',
       created_at TEXT NOT NULL
     );
@@ -154,6 +155,9 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_website_events_device_time ON website_events(device_id, occurred_at DESC);
     CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_events(occurred_at DESC);
   `);
+
+  const overrideColumns = new Set(db.prepare('PRAGMA table_info(overrides)').all().map((column) => column.name));
+  if (!overrideColumns.has('message')) db.exec('ALTER TABLE overrides ADD COLUMN message TEXT');
 }
 
 function seedCatalog(db) {

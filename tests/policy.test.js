@@ -15,11 +15,11 @@ function fixture() {
   return { directory, db, device: db.prepare('SELECT * FROM devices WHERE id = ?').get(device.id) };
 }
 
-function addOverride(db, deviceId, id, targetType, targetId, action, createdAt, effectiveUntil = null) {
+function addOverride(db, deviceId, id, targetType, targetId, action, createdAt, effectiveUntil = null, message = null) {
   db.prepare(`
-    INSERT INTO overrides (id, device_id, target_type, target_id, action, effective_until, source, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'test', 'accepted', ?)
-  `).run(id, deviceId, targetType, targetId, action, effectiveUntil, createdAt);
+    INSERT INTO overrides (id, device_id, target_type, target_id, action, effective_until, message, source, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'test', 'accepted', ?)
+  `).run(id, deviceId, targetType, targetId, action, effectiveUntil, message, createdAt);
 }
 
 test('individual services are persistent selections', () => {
@@ -105,6 +105,26 @@ test('temporary policy includes an offline fallback for its expiration', () => {
     assert.equal(policy.nextExpiry, '2026-09-01T20:30:00.000Z');
     assert.equal(policy.afterExpiry.services.find((service) => service.id === 'netflix').blocked, false);
     assert.equal(policy.afterExpiry.nextExpiry, null);
+  } finally {
+    db.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('internet pause carries a parent message until access is restored', () => {
+  const { directory, db, device } = fixture();
+  try {
+    const now = Date.now();
+    addOverride(db, device.id, 'pause-1', 'internet', 'access', 'block', new Date(now).toISOString(), null, 'Please feed the dogs.');
+    const paused = resolvePolicy(db, device);
+    assert.equal(paused.internetBlocked, true);
+    assert.equal(paused.internetMessage, 'Please feed the dogs.');
+    assert.equal(paused.internetNoticeId, 'pause-1');
+    addOverride(db, device.id, 'restore-1', 'internet', 'access', 'allow', new Date(now + 1).toISOString());
+    const restored = resolvePolicy(db, device);
+    assert.equal(restored.internetBlocked, false);
+    assert.equal(restored.internetMessage, null);
+    assert.equal(restored.internetNoticeId, null);
   } finally {
     db.close();
     rmSync(directory, { recursive: true, force: true });

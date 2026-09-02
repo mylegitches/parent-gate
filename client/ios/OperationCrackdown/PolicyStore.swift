@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import UserNotifications
 
 @MainActor
 final class PolicyStore: ObservableObject {
@@ -16,6 +17,7 @@ final class PolicyStore: ObservableObject {
     private var credential: String? { KeychainStore.read(account: "deviceCredential") }
 
     func start() async {
+        _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
         enrolled = credential != nil && !server.isEmpty
         if enrolled { await synchronize() }
     }
@@ -39,9 +41,27 @@ final class PolicyStore: ObservableObject {
             let latest = try await ApiClient.shared.policy(server: server, credential: credential)
             policy = latest
             controls.apply(latest)
+            updateInternetNotice(latest)
             try await ApiClient.shared.targets(server: server, credential: credential, serviceKeys: controls.configuredKeys())
             status = "Confirmed revision \(latest.revision)"
         } catch { status = "Waiting to synchronize: \(error.localizedDescription)" }
+    }
+
+    private func updateInternetNotice(_ policy: ClientPolicy) {
+        let center = UNUserNotificationCenter.current()
+        guard policy.internetBlocked == true else {
+            center.removeDeliveredNotifications(withIdentifiers: ["operation-crackdown-internet"])
+            UserDefaults.standard.removeObject(forKey: "lastInternetNoticeId")
+            return
+        }
+        let noticeId = policy.internetNoticeId ?? "internet-paused"
+        guard UserDefaults.standard.string(forKey: "lastInternetNoticeId") != noticeId else { return }
+        UserDefaults.standard.set(noticeId, forKey: "lastInternetNoticeId")
+        let content = UNMutableNotificationContent()
+        content.title = "Internet access is paused"
+        content.body = policy.internetMessage ?? "Internet access is paused."
+        content.sound = .default
+        center.add(UNNotificationRequest(identifier: "operation-crackdown-internet", content: content, trigger: nil))
     }
 
     func override(targetType: String, targetId: String, action: String) async {

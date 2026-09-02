@@ -101,6 +101,14 @@ function renderDevices() {
     for (const button of $$('[data-master-action]', card)) {
       button.classList.toggle('active', (button.dataset.masterAction === 'enable') === device.policy.masterEnabled);
     }
+    const internetBlocked = Boolean(device.policy.internetBlocked);
+    $('.internet-panel', card).hidden = device.platform === 'ios';
+    const internetState = $('.internet-state', card);
+    internetState.textContent = internetBlocked ? 'Paused' : 'Available';
+    internetState.classList.toggle('blocked', internetBlocked);
+    $('.internet-paused', card).hidden = !internetBlocked;
+    $('.internet-pause-form', card).hidden = internetBlocked;
+    $('.internet-message', card).textContent = device.policy.internetMessage || 'Internet access is paused.';
 
     const serviceList = $('.service-list', card);
     for (const service of device.policy.services) {
@@ -299,6 +307,14 @@ $('#devices').addEventListener('click', async (event) => {
   event.target.disabled = true;
   try {
     if (event.target.dataset.masterAction) await applyOverride(card, 'master', 'blocking', event.target.dataset.masterAction);
+    if (event.target.hasAttribute('data-internet-restore')) {
+      await api(`/api/devices/${encodeURIComponent(card.dataset.deviceId)}/override`, {
+        method: 'PUT',
+        body: { targetType: 'internet', targetId: 'access', action: 'allow' },
+      });
+      showNotice('Internet access restored.');
+      await refreshAll();
+    }
     if (event.target.dataset.serviceAction) {
       const service = event.target.closest('[data-service-id]').dataset.serviceId;
       await applyOverride(card, 'service', service, event.target.dataset.serviceAction);
@@ -345,6 +361,27 @@ $('#devices').addEventListener('click', async (event) => {
 });
 
 $('#devices').addEventListener('submit', async (event) => {
+  if (event.target.matches('.internet-pause-form')) {
+    event.preventDefault();
+    const card = event.target.closest('.device-card');
+    const submit = $('button[type=submit]', event.target);
+    submit.disabled = true;
+    try {
+      const values = Object.fromEntries(new FormData(event.target));
+      await api(`/api/devices/${encodeURIComponent(card.dataset.deviceId)}/override`, {
+        method: 'PUT',
+        body: { targetType: 'internet', targetId: 'access', action: 'block', message: values.message },
+      });
+      showNotice('Internet pause sent to the device.');
+      event.target.reset();
+      await refreshAll();
+    } catch (error) {
+      showNotice(error.message, true);
+    } finally {
+      submit.disabled = false;
+    }
+    return;
+  }
   if (!event.target.matches('.website-form')) return;
   event.preventDefault();
   const card = event.target.closest('.device-card');

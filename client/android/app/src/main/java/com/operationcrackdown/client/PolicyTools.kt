@@ -37,6 +37,10 @@ object PolicyTools {
                     item.put("blocked", enabled && item.optBoolean("configuredBlocked"))
                 }
             }
+        } else if (targetType == "internet") {
+            local.put("internetBlocked", action == "block")
+            local.put("internetMessage", if (action == "block") operation.optString("message", "Internet access is paused.") else JSONObject.NULL)
+            local.put("internetNoticeId", if (action == "block") operation.optString("operationId") else JSONObject.NULL)
         } else if (services != null) {
             for (index in 0 until services.length()) {
                 val service = services.getJSONObject(index)

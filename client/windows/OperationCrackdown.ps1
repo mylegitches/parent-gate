@@ -10,19 +10,26 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$script:ClientVersion = '0.1.0'
+$script:ClientVersion = '0.2.0'
 $script:ConfigPath = Join-Path $DataDirectory 'config.json'
 $script:PolicyPath = Join-Path $DataDirectory 'policy.json'
 $script:StatusPath = Join-Path $DataDirectory 'status.json'
 $script:PendingPath = Join-Path $DataDirectory 'pending-operations.json'
 $script:ApplicationEventsPath = Join-Path $DataDirectory 'pending-application-events.json'
 $script:WebsiteEventsPath = Join-Path $DataDirectory 'pending-website-events.json'
+$script:FirewallStatePath = Join-Path $DataDirectory 'internet-firewall-backup.json'
+$script:InternetStatePath = Join-Path $DataDirectory 'internet-pause-state.json'
+$script:NoticeMarkerPath = Join-Path $DataDirectory 'last-internet-notice.txt'
+$script:NoticeScriptPath = Join-Path $DataDirectory 'ShowInternetNotice.ps1'
+$script:FirewallRuleGroup = 'Operation Crackdown Control Channel'
 $script:LocalPort = 8765
 $script:LatestPolicy = $null
 $script:Credential = $null
 $script:Config = $null
 $script:LastError = $null
 $script:NextEnforcement = [DateTime]::MinValue
+$script:NextInternetEnforcement = [DateTime]::MinValue
+$script:InternetPauseKnownDisabled = $false
 $script:ObservedApplications = @{}
 $script:ApplicationMonitorInitialized = $false
 
@@ -149,7 +156,7 @@ function Invoke-Enrollment {
         platform = 'windows'
         osVersion = [Environment]::OSVersion.VersionString
         clientVersion = $script:ClientVersion
-        capabilities = @('process-enforcement', 'hosts-enforcement', 'target-scan', 'local-pin')
+        capabilities = @('process-enforcement', 'hosts-enforcement', 'target-scan', 'local-pin', 'internet-pause-message')
     }
     $response = Invoke-RestMethod -Uri "$($ServerUrl.TrimEnd('/'))/api/client/v1/enroll" -Method Post -ContentType 'application/json' -Body ($body | ConvertTo-Json -Depth 5) -TimeoutSec 20
     $config = @{
@@ -213,6 +220,11 @@ function Apply-OperationLocally {
         foreach ($service in @($local.services)) { $service.blocked = $local.masterEnabled -and $service.configuredBlocked }
         foreach ($target in @($local.customTargets)) { $target.blocked = $local.masterEnabled -and $target.configuredBlocked }
         foreach ($website in @($local.customWebsites)) { $website.blocked = $local.masterEnabled -and $website.configuredBlocked }
+    }
+    elseif ($Operation.targetType -eq 'internet') {
+        $local.internetBlocked = $Operation.action -eq 'block'
+        $local.internetMessage = if ($local.internetBlocked) { [string]$Operation.message } else { $null }
+        $local.internetNoticeId = if ($local.internetBlocked) { [string]$Operation.operationId } else { $null }
     }
     elseif ($Operation.targetType -eq 'service') {
         foreach ($service in $local.services) {
@@ -338,6 +350,95 @@ function Set-ManagedHosts {
     Clear-DnsClientCache -ErrorAction SilentlyContinue
 }
 
+function Get-ControlEndpoint {
+    $uri = [Uri]$script:Config.serverUrl
+    $port = if (-not $uri.IsDefaultPort) { $uri.Port } elseif ($uri.Scheme -eq 'https') { 443 } else { 80 }
+    $addresses = New-Object Collections.Generic.List[string]
+    if ($uri.HostNameType -eq [UriHostNameType]::IPv4 -or $uri.HostNameType -eq [UriHostNameType]::IPv6) {
+        $addresses.Add($uri.Host)
+    }
+    else {
+        foreach ($address in [Net.Dns]::GetHostAddresses($uri.Host)) { $addresses.Add($address.IPAddressToString) }
+    }
+    if ($addresses.Count -eq 0) { throw "Unable to resolve dashboard host $($uri.Host)." }
+    return @{ Port = $port; Addresses = @($addresses | Sort-Object -Unique) }
+}
+
+function Remove-ControlFirewallRules {
+    Get-NetFirewallRule -Group $script:FirewallRuleGroup -ErrorAction SilentlyContinue |
+        Remove-NetFirewallRule -ErrorAction SilentlyContinue
+}
+
+function Enable-InternetPause {
+    if (-not (Test-IsAdministrator)) { throw 'Internet pause requires an elevated client.' }
+    $endpoint = Get-ControlEndpoint
+    $state = Read-JsonFile $script:FirewallStatePath $null
+    if (-not $state) {
+        $profiles = @(Get-NetFirewallProfile | ForEach-Object {
+            @{ name = [string]$_.Name; defaultOutboundAction = [string]$_.DefaultOutboundAction }
+        })
+        $state = @{ profiles = $profiles; controlAddresses = @(); controlPort = 0 }
+        Save-JsonFile $script:FirewallStatePath $state
+    }
+    $addressKey = (@($endpoint.Addresses) -join ',')
+    $existingKey = (@($state.controlAddresses) -join ',')
+    if ($addressKey -ne $existingKey -or [int]$state.controlPort -ne [int]$endpoint.Port) {
+        Remove-ControlFirewallRules
+        $powershellPath = Join-Path $PSHOME 'powershell.exe'
+        New-NetFirewallRule -DisplayName 'Operation Crackdown dashboard access' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Program $powershellPath -Protocol TCP -RemoteAddress $endpoint.Addresses -RemotePort $endpoint.Port -Profile Any | Out-Null
+        New-NetFirewallRule -DisplayName 'Operation Crackdown DNS (UDP)' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Protocol UDP -RemotePort 53 -Profile Any | Out-Null
+        New-NetFirewallRule -DisplayName 'Operation Crackdown DNS (TCP)' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Protocol TCP -RemotePort 53 -Profile Any | Out-Null
+        New-NetFirewallRule -DisplayName 'Operation Crackdown DHCP (IPv4)' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Protocol UDP -LocalPort 68 -RemotePort 67 -Profile Any | Out-Null
+        New-NetFirewallRule -DisplayName 'Operation Crackdown DHCP (IPv6)' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Protocol UDP -LocalPort 546 -RemotePort 547 -Profile Any | Out-Null
+        $state.controlAddresses = @($endpoint.Addresses)
+        $state.controlPort = [int]$endpoint.Port
+        Save-JsonFile $script:FirewallStatePath $state
+    }
+    foreach ($profile in Get-NetFirewallProfile) {
+        if ([string]$profile.DefaultOutboundAction -ne 'Block') {
+            Set-NetFirewallProfile -Name $profile.Name -DefaultOutboundAction Block
+        }
+    }
+    $script:InternetPauseKnownDisabled = $false
+}
+
+function Disable-InternetPause {
+    $state = Read-JsonFile $script:FirewallStatePath $null
+    if ($state) {
+        foreach ($profile in @($state.profiles)) {
+            $action = if ([string]$profile.defaultOutboundAction -eq 'Block') { 'Block' } else { 'Allow' }
+            Set-NetFirewallProfile -Name ([string]$profile.name) -DefaultOutboundAction $action
+        }
+        Remove-Item -LiteralPath $script:FirewallStatePath -Force -ErrorAction SilentlyContinue
+        Remove-ControlFirewallRules
+    }
+    elseif (-not $script:InternetPauseKnownDisabled) { Remove-ControlFirewallRules }
+    $script:InternetPauseKnownDisabled = $true
+}
+
+function Update-InternetNotice {
+    param($Policy)
+    $blocked = [bool]$Policy.internetBlocked
+    $noticeId = if ($blocked) { [string]$Policy.internetNoticeId } else { '' }
+    $message = if ($blocked -and -not [string]::IsNullOrWhiteSpace([string]$Policy.internetMessage)) { [string]$Policy.internetMessage } else { 'Internet access is paused.' }
+    $desired = @{ internetBlocked = $blocked; noticeId = $noticeId; message = $message }
+    $current = Read-JsonFile $script:InternetStatePath $null
+    if (-not $current -or [bool]$current.internetBlocked -ne $blocked -or [string]$current.noticeId -ne $noticeId -or [string]$current.message -ne $message) {
+        Save-JsonFile $script:InternetStatePath $desired
+    }
+    if (-not $blocked) { return }
+    $lastNotice = if (Test-Path -LiteralPath $script:NoticeMarkerPath) { (Get-Content -LiteralPath $script:NoticeMarkerPath -Raw).Trim() } else { '' }
+    if ($lastNotice -eq $noticeId) { return }
+    Set-Content -LiteralPath $script:NoticeMarkerPath -Value $noticeId -Encoding ASCII
+    if (Test-Path -LiteralPath $script:NoticeScriptPath) {
+        $arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$script:NoticeScriptPath`" -StatePath `"$script:InternetStatePath`" -NoticeId `"$noticeId`""
+        Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList $arguments -WindowStyle Hidden | Out-Null
+    }
+    else {
+        Start-Process -FilePath 'msg.exe' -ArgumentList @('*', '/TIME:120', "Internet paused: $message") -WindowStyle Hidden | Out-Null
+    }
+}
+
 function Apply-Policy {
     param($Policy)
     $errors = New-Object Collections.Generic.List[string]
@@ -348,6 +449,21 @@ function Apply-Policy {
     }
     try { Set-ManagedHosts @(Get-BlockedDomains $Policy) }
     catch { $errors.Add("Website enforcement failed: $($_.Exception.Message)") }
+    try {
+        if ($Policy.internetBlocked) {
+            if ([DateTime]::UtcNow -ge $script:NextInternetEnforcement) {
+                Enable-InternetPause
+                $script:NextInternetEnforcement = [DateTime]::UtcNow.AddMinutes(1)
+            }
+        }
+        else {
+            Disable-InternetPause
+            $script:NextInternetEnforcement = [DateTime]::MinValue
+        }
+    }
+    catch { $errors.Add("Internet pause enforcement failed: $($_.Exception.Message)") }
+    try { Update-InternetNotice $Policy }
+    catch { $errors.Add("Internet pause message failed: $($_.Exception.Message)") }
     $script:NextEnforcement = [DateTime]::UtcNow.AddSeconds(2)
     $status = @{
         state = if ($errors.Count -eq 0) { 'applied' } else { 'degraded' }
@@ -359,6 +475,7 @@ function Apply-Policy {
         pendingLocalOperations = @(Get-PendingOperations).Count
         pendingApplicationEvents = @(Get-PendingApplicationEvents).Count
         pendingWebsiteEvents = @(Get-PendingWebsiteEvents).Count
+        internetBlocked = [bool]$Policy.internetBlocked
     }
     Save-JsonFile $script:StatusPath $status
     return $status
@@ -539,6 +656,7 @@ function Get-LocalPage {
     $policy = $script:LatestPolicy
     $masterState = if ($policy -and $policy.masterEnabled) { 'On' } elseif ($policy) { 'Off' } else { 'Unavailable' }
     $controls = "<option value='master|blocking|enable'>Turn master blocking on</option><option value='master|blocking|disable'>Turn master blocking off</option>"
+    if ($policy -and $policy.internetBlocked) { $controls = "<option value='internet|access|allow'>Restore internet access</option>$controls" }
     if ($policy) {
         foreach ($service in @($policy.services)) {
             $state = if ($service.configuredBlocked) { 'Selected to block' } else { 'Allowed' }
@@ -564,7 +682,7 @@ function Get-LocalPage {
 <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Parent Override</title><style>
 body{font-family:Segoe UI,sans-serif;background:#f3f5f9;color:#172033;margin:0;padding:24px}.card{max-width:540px;margin:5vh auto;background:white;border:1px solid #d9dfeb;border-radius:18px;padding:28px;box-shadow:0 16px 45px #1f2a4414}h1{margin-top:0}label{display:grid;gap:6px;font-weight:650;margin:14px 0}input,select,button{font:inherit;padding:11px;border-radius:9px;border:1px solid #cbd2df}button{background:#3157d5;color:white;border:0;font-weight:750;cursor:pointer;width:100%;margin-top:12px}.muted{color:#667085}.warning{color:#b54708;background:#fff5e8;padding:10px;border-radius:9px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}@media(max-width:520px){.grid{grid-template-columns:1fr}}</style></head>
-<body><main class="card"><h1>Parent Override</h1><p class="muted">Master blocking: <strong>$(HtmlEncode $masterState)</strong></p>$message
+<body><main class="card"><h1>Parent Override</h1><p class="muted">Master blocking: <strong>$(HtmlEncode $masterState)</strong></p>$(if ($policy -and $policy.internetBlocked) { "<p class='warning'><strong>Internet paused:</strong> $(HtmlEncode ([string]$policy.internetMessage))</p>" })$message
 <form method="post" action="/override"><label>Parent PIN<input name="pin" type="password" inputmode="numeric" required></label>
 <label>Control<select name="selection">$controls</select></label>
 <div class="grid"><label>Item action<select name="serviceAction"><option value="block">Block</option><option value="allow">Allow</option></select></label>
@@ -611,7 +729,7 @@ function Process-LocalRequest {
         $parts = $selection.Split('|')
         $targetType = $parts[0]
         $targetId = $parts[1]
-        $action = if ($targetType -eq 'master') { $parts[2] } else { [string]$form['serviceAction'] }
+        $action = if ($targetType -in @('master', 'internet')) { $parts[2] } else { [string]$form['serviceAction'] }
         $duration = [int]$form['duration']
         $effectiveUntil = if ($duration -gt 0) { [DateTime]::UtcNow.AddMinutes($duration).ToString('o') } else { $null }
         $operation = @{

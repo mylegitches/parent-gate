@@ -6,6 +6,9 @@ struct ClientPolicy: Codable {
     var profile: String
     var effectiveUntil: String?
     var masterEnabled: Bool
+    var internetBlocked: Bool?
+    var internetMessage: String?
+    var internetNoticeId: String?
     var services: [ServicePolicy]
     var customTargets: [CustomTarget]
     var pinVerifiers: [PinVerifier]

@@ -15,10 +15,12 @@ export function resolvePolicy(db, device, now = new Date(), expiryDepth = 0) {
     WHERE device_id = ? AND status = 'accepted'
       AND (effective_until IS NULL OR effective_until > ?)
     ORDER BY created_at ASC, rowid ASC
-  `).all(device.id, nowIso).filter((item) => ['master', 'service', 'target', 'website'].includes(item.target_type));
+  `).all(device.id, nowIso).filter((item) => ['master', 'service', 'target', 'website', 'internet'].includes(item.target_type));
 
   const masterOverride = overrides.filter((item) => item.target_type === 'master').at(-1);
   const masterEnabled = masterOverride ? masterOverride.action === 'enable' : true;
+  const internetOverride = overrides.filter((item) => item.target_type === 'internet').at(-1);
+  const internetBlocked = internetOverride?.action === 'block';
   const configuredServices = new Map(SERVICE_CATALOG.map((service) => [service.id, false]));
 
   for (const [serviceId, override] of latestByTarget(overrides, 'service')) {
@@ -77,7 +79,9 @@ export function resolvePolicy(db, device, now = new Date(), expiryDepth = 0) {
     })),
     customTargets,
     customWebsites,
-    internetBlocked: false,
+    internetBlocked,
+    internetMessage: internetBlocked ? internetOverride.message : null,
+    internetNoticeId: internetBlocked ? internetOverride.id : null,
   };
   if (nextExpiry && expiryDepth < 20) {
     policy.afterExpiry = resolvePolicy(db, device, new Date(new Date(nextExpiry).valueOf() + 1), expiryDepth + 1);
@@ -88,6 +92,9 @@ export function resolvePolicy(db, device, now = new Date(), expiryDepth = 0) {
 export function validateOverride(targetType, targetId, action) {
   if (targetType === 'master') {
     return targetId === 'blocking' && ['enable', 'disable'].includes(action);
+  }
+  if (targetType === 'internet') {
+    return targetId === 'access' && ['allow', 'block'].includes(action);
   }
   if (targetType === 'service') {
     return SERVICE_CATALOG.some((service) => service.id === targetId) && ['allow', 'block'].includes(action);

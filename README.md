@@ -50,6 +50,14 @@ The main dashboard should favor a few large controls instead of exposing technic
 - Add and block an additional website by pasting its domain or URL.
 - See whether each device is online, pending synchronization, or last seen at a particular time.
 
+### Internet pause and parent message
+
+For Windows and Android devices, a parent can enter a short message such as `Feed the dogs, then let us know`, then choose **Pause internet and show message**. The device displays the message and pauses ordinary application traffic while keeping the Operation Crackdown control channel available. The same device card changes to a prominent **Restore internet** action. The pause remains active until a parent restores access.
+
+The Windows client snapshots the existing outbound firewall defaults before changing them, permits only DNS and its own dashboard connection, and restores the original per-profile defaults afterward. Its uninstaller also restores that snapshot if the client is removed while a pause is active. Android routes all applications except the Operation Crackdown client into its local packet-drop VPN and posts the message as a high-priority notification.
+
+iOS displays a synchronized parent-message notification and banner, but full device-wide internet suspension is not exposed in the dashboard for iOS because it requires additional Apple Network Extension or managed-device capabilities beyond Family Controls.
+
 The master state, individual selections, temporary expiration, and parent who changed a control should be immediately visible. The interface should work well on a phone and desktop browser.
 
 ### Local parent override

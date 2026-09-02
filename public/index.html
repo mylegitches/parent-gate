@@ -88,6 +88,24 @@
         <span class="policy-status"></span>
       </header>
 
+      <section class="internet-panel">
+        <div class="internet-heading">
+          <div><p class="eyebrow">DEVICE INTERNET</p><h3>Internet access</h3></div>
+          <span class="internet-state"></span>
+        </div>
+        <div class="internet-paused" hidden>
+          <p class="internet-message"></p>
+          <button class="primary restore-internet" data-internet-restore>Restore internet</button>
+        </div>
+        <form class="internet-pause-form">
+          <label>Message shown on their screen
+            <textarea name="message" maxlength="240" rows="2" placeholder="Feed the dogs, then let us know." required></textarea>
+          </label>
+          <button class="danger" type="submit">Pause internet and show message</button>
+        </form>
+        <p class="muted master-help">The client keeps its private dashboard connection so Restore internet still works.</p>
+      </section>
+
       <div class="controls-block">
         <div class="section-heading">
           <div><p class="eyebrow">MASTER CONTROL</p><h3>Blocking</h3></div>
@@ -149,6 +167,6 @@
     </article>
   </template>
 
-  <script type="module" src="/app.js?v=0.1.1"></script>
+  <script type="module" src="/app.js?v=0.1.2"></script>
 </body>
 </html>

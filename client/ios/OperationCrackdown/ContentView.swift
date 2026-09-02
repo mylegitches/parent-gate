@@ -37,6 +37,15 @@ struct ContentView: View {
             }
 
             if let policy = store.policy {
+                if policy.internetBlocked == true {
+                    Section("Internet access is paused") {
+                        Text(policy.internetMessage ?? "Internet access is paused.")
+                            .font(.headline)
+                        Button("Restore internet") {
+                            Task { await store.override(targetType: "internet", targetId: "access", action: "allow") }
+                        }
+                    }
+                }
                 Section("Services") {
                     Picker("Action", selection: $serviceAction) { Text("Block").tag("block"); Text("Allow").tag("allow") }
                     ForEach(policy.services) { service in

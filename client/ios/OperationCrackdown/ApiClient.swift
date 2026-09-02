@@ -14,7 +14,7 @@ actor ApiClient {
             "name": name,
             "platform": "ios",
             "osVersion": await UIDevice.current.systemVersion,
-            "clientVersion": "0.1.0",
+            "clientVersion": "0.2.0",
             "capabilities": ["family-controls", "managed-settings", "device-activity", "local-pin"],
         ]
         let data = try await request(url: URL(string: "\(root)/api/client/v1/enroll")!, method: "POST", json: payload, authenticated: false)
@@ -75,4 +75,3 @@ actor ApiClient {
         return data
     }
 }
-

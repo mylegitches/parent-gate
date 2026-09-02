@@ -11,6 +11,17 @@ $taskName = 'Operation Crackdown Client'
 schtasks.exe /End /TN $taskName 2>$null | Out-Null
 schtasks.exe /Delete /TN $taskName /F 2>$null | Out-Null
 
+$installDirectory = "$env:ProgramData\OperationCrackdown"
+$firewallStatePath = Join-Path $installDirectory 'internet-firewall-backup.json'
+$firewallState = if (Test-Path -LiteralPath $firewallStatePath) { Get-Content -LiteralPath $firewallStatePath -Raw | ConvertFrom-Json } else { $null }
+if ($firewallState) {
+    foreach ($profile in @($firewallState.profiles)) {
+        $action = if ([string]$profile.defaultOutboundAction -eq 'Block') { 'Block' } else { 'Allow' }
+        Set-NetFirewallProfile -Name ([string]$profile.name) -DefaultOutboundAction $action
+    }
+}
+Get-NetFirewallRule -Group 'Operation Crackdown Control Channel' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+
 $hostsPath = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
 if (Test-Path -LiteralPath $hostsPath) {
     $content = Get-Content -LiteralPath $hostsPath -Raw
@@ -23,7 +34,5 @@ if (Test-Path -LiteralPath $hostsPath) {
 $shortcutPath = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'Operation Crackdown Parent Override.url'
 if (Test-Path -LiteralPath $shortcutPath) { Remove-Item -LiteralPath $shortcutPath -Force }
 
-$installDirectory = "$env:ProgramData\OperationCrackdown"
 if (Test-Path -LiteralPath $installDirectory) { Remove-Item -LiteralPath $installDirectory -Recurse -Force }
 Write-Host 'Operation Crackdown was removed. Its managed hosts entries were cleared.'
-

@@ -24,7 +24,7 @@ class ApiClient(private val context: Context) {
                 .put("platform", "android")
                 .put("osVersion", android.os.Build.VERSION.RELEASE)
                 .put("clientVersion", BuildConfig.VERSION_NAME)
-                .put("capabilities", JSONArray(listOf("package-vpn", "dns-vpn", "target-scan", "local-pin"))),
+                .put("capabilities", JSONArray(listOf("package-vpn", "dns-vpn", "target-scan", "local-pin", "internet-pause-message"))),
             credential = null,
         )
         preferences.edit()
@@ -48,6 +48,7 @@ class ApiClient(private val context: Context) {
             .put("state", state)
             .put("profile", policy.optString("profile"))
             .put("blockedPackages", JSONArray(blockedPackages.toList()))
+            .put("internetBlocked", policy.optBoolean("internetBlocked", false))
         if (error != null) status.put("error", error)
         request(
             "$serverUrl/api/client/v1/status",

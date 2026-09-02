@@ -19,6 +19,8 @@ $installDirectory = "$env:ProgramData\OperationCrackdown"
 $configPath = Join-Path $installDirectory 'config.json'
 $agentSource = Join-Path $PSScriptRoot 'OperationCrackdown.ps1'
 $agentPath = Join-Path $installDirectory 'OperationCrackdown.ps1'
+$noticeSource = Join-Path $PSScriptRoot 'ShowInternetNotice.ps1'
+$noticePath = Join-Path $installDirectory 'ShowInternetNotice.ps1'
 $extensionSource = Join-Path (Split-Path $PSScriptRoot -Parent) 'browser-extension'
 $extensionPath = Join-Path $installDirectory 'browser-extension'
 
@@ -42,6 +44,7 @@ if (Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyCont
 }
 
 Copy-Item -LiteralPath $agentSource -Destination $agentPath -Force
+if (Test-Path -LiteralPath $noticeSource) { Copy-Item -LiteralPath $noticeSource -Destination $noticePath -Force }
 if (Test-Path -LiteralPath $extensionSource) {
     Copy-Item -LiteralPath $extensionSource -Destination $installDirectory -Recurse -Force
 }

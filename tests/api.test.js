@@ -101,6 +101,25 @@ test('setup, enrollment, direct controls, custom websites, and policy form one w
       headers: parentHeaders,
       body: JSON.stringify({ url: 'https://social.example.com/messages', displayName: 'Example Social' }),
     }));
+    const missingMessage = await fetch(`${baseUrl}/api/devices/${enrollment.deviceId}/override`, {
+      method: 'PUT',
+      headers: parentHeaders,
+      body: JSON.stringify({ targetType: 'internet', targetId: 'access', action: 'block', message: '' }),
+    });
+    assert.equal(missingMessage.status, 400);
+    const pause = await responseJson(await fetch(`${baseUrl}/api/devices/${enrollment.deviceId}/override`, {
+      method: 'PUT',
+      headers: parentHeaders,
+      body: JSON.stringify({ targetType: 'internet', targetId: 'access', action: 'block', message: 'Please feed the dogs.' }),
+    }));
+    assert.equal(pause.policy.internetBlocked, true);
+    assert.equal(pause.policy.internetMessage, 'Please feed the dogs.');
+    const restore = await responseJson(await fetch(`${baseUrl}/api/devices/${enrollment.deviceId}/override`, {
+      method: 'PUT',
+      headers: parentHeaders,
+      body: JSON.stringify({ targetType: 'internet', targetId: 'access', action: 'allow' }),
+    }));
+    assert.equal(restore.policy.internetBlocked, false);
     const policy = await responseJson(await fetch(`${baseUrl}/api/client/v1/policy`, { headers: clientHeaders }));
     assert.equal(policy.masterEnabled, true);
     assert.equal(policy.customTargets[0].key, 'process:zoom.exe');

@@ -14,10 +14,13 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 $installDirectory = "$env:ProgramData\OperationCrackdown"
 $agentSource = Join-Path $PSScriptRoot 'OperationCrackdown.ps1'
 $agentPath = Join-Path $installDirectory 'OperationCrackdown.ps1'
+$noticeSource = Join-Path $PSScriptRoot 'ShowInternetNotice.ps1'
+$noticePath = Join-Path $installDirectory 'ShowInternetNotice.ps1'
 $extensionSource = Join-Path (Split-Path $PSScriptRoot -Parent) 'browser-extension'
 $extensionPath = Join-Path $installDirectory 'browser-extension'
 New-Item -ItemType Directory -Path $installDirectory -Force | Out-Null
 Copy-Item -LiteralPath $agentSource -Destination $agentPath -Force
+if (Test-Path -LiteralPath $noticeSource) { Copy-Item -LiteralPath $noticeSource -Destination $noticePath -Force }
 if (Test-Path -LiteralPath $extensionSource) {
     Copy-Item -LiteralPath $extensionSource -Destination $installDirectory -Recurse -Force
 }

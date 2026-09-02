@@ -17,6 +17,8 @@ class FocusVpnService : VpnService() {
     private val running = AtomicBoolean(false)
     private var tunnel: ParcelFileDescriptor? = null
     private var appliedPackages: Set<String> = emptySet()
+    private var appliedInternetBlocked = false
+    private var shownNoticeId = ""
     private var dropThread: Thread? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -47,7 +49,9 @@ class FocusVpnService : VpnService() {
             try {
                 val policy = PolicyTools.activePolicy(api.syncPending() ?: api.getPolicy())
                 val blocked = PolicyTools.blockedPackages(policy)
-                applyPackages(blocked)
+                val internetBlocked = policy.optBoolean("internetBlocked", false)
+                applyPackages(blocked, internetBlocked)
+                updateInternetNotice(policy)
                 api.postStatus(policy, "applied", blocked)
                 if (System.currentTimeMillis() >= nextScan) {
                     api.postTargets(scanLauncherTargets())
@@ -55,7 +59,10 @@ class FocusVpnService : VpnService() {
                 }
             } catch (error: Exception) {
                 val cached = api.cachedPolicy()?.let(PolicyTools::activePolicy)
-                if (cached != null) applyPackages(PolicyTools.blockedPackages(cached))
+                if (cached != null) {
+                    applyPackages(PolicyTools.blockedPackages(cached), cached.optBoolean("internetBlocked", false))
+                    updateInternetNotice(cached)
+                }
             }
             repeat(32) {
                 if (!running.get()) return
@@ -65,22 +72,28 @@ class FocusVpnService : VpnService() {
     }
 
     @Synchronized
-    private fun applyPackages(packages: Set<String>) {
-        if (packages == appliedPackages) return
+    private fun applyPackages(packages: Set<String>, internetBlocked: Boolean) {
+        if (packages == appliedPackages && internetBlocked == appliedInternetBlocked) return
         closeTunnel()
         appliedPackages = packages
-        if (packages.isEmpty()) return
+        appliedInternetBlocked = internetBlocked
+        if (packages.isEmpty() && !internetBlocked) return
         val builder = Builder()
             .setSession("Operation Crackdown focus filter")
             .setMtu(1500)
             .addAddress("10.254.0.1", 32)
             .addRoute("0.0.0.0", 0)
         var packageCount = 0
-        for (packageName in packages) {
-            try {
-                builder.addAllowedApplication(packageName)
-                packageCount += 1
-            } catch (_: PackageManager.NameNotFoundException) { }
+        if (internetBlocked) {
+            builder.addDisallowedApplication(packageName)
+            packageCount = 1
+        } else {
+            for (blockedPackage in packages) {
+                try {
+                    builder.addAllowedApplication(blockedPackage)
+                    packageCount += 1
+                } catch (_: PackageManager.NameNotFoundException) { }
+            }
         }
         if (packageCount == 0) return
         tunnel = builder.establish()
@@ -93,6 +106,30 @@ class FocusVpnService : VpnService() {
                 }
             } catch (_: Exception) { }
         }, "crackdown-packet-dropper").also { it.start() }
+    }
+
+    private fun updateInternetNotice(policy: JSONObject) {
+        val manager = getSystemService(NotificationManager::class.java)
+        if (!policy.optBoolean("internetBlocked", false)) {
+            shownNoticeId = ""
+            manager.cancel(INTERNET_NOTICE_ID)
+            return
+        }
+        val noticeId = policy.optString("internetNoticeId", "internet-paused")
+        if (noticeId == shownNoticeId) return
+        shownNoticeId = noticeId
+        val message = policy.optString("internetMessage", "Internet access is paused.")
+        val intent = PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val notification = Notification.Builder(this, MESSAGE_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle("Internet access is paused")
+            .setContentText(message)
+            .setStyle(Notification.BigTextStyle().bigText(message))
+            .setPriority(Notification.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(intent)
+            .build()
+        try { manager.notify(INTERNET_NOTICE_ID, notification) } catch (_: SecurityException) { }
     }
 
     @Synchronized
@@ -136,10 +173,13 @@ class FocusVpnService : VpnService() {
     private fun ensureNotificationChannel() {
         val manager = getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(CHANNEL_ID, "Focus client", NotificationManager.IMPORTANCE_LOW))
+        manager.createNotificationChannel(NotificationChannel(MESSAGE_CHANNEL_ID, "Parent messages", NotificationManager.IMPORTANCE_HIGH))
     }
 
     companion object {
         private const val CHANNEL_ID = "operation-crackdown-client"
         private const val NOTIFICATION_ID = 1782
+        private const val INTERNET_NOTICE_ID = 1783
+        private const val MESSAGE_CHANNEL_ID = "operation-crackdown-parent-messages"
     }
 }

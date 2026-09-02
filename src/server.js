@@ -231,12 +231,12 @@ function resolveClientPolicy(device) {
   return { ...resolvePolicy(db, device), deviceId: device.id, pinVerifiers };
 }
 
-function insertOverride({ deviceId, targetType, targetId, action, effectiveUntil, source, parentId, baseRevision = null, operationId = null }) {
+function insertOverride({ deviceId, targetType, targetId, action, effectiveUntil, source, parentId, baseRevision = null, operationId = null, message = null }) {
   const id = randomUUID();
   db.prepare(`
     INSERT INTO overrides
-      (id, operation_id, device_id, target_type, target_id, action, effective_until, source, parent_id, base_revision, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'accepted', ?)
+      (id, operation_id, device_id, target_type, target_id, action, effective_until, source, parent_id, base_revision, message, status, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'accepted', ?)
   `).run(
     id,
     operationId,
@@ -248,6 +248,7 @@ function insertOverride({ deviceId, targetType, targetId, action, effectiveUntil
     source,
     parentId,
     baseRevision,
+    message,
     new Date().toISOString(),
   );
   incrementRevision(deviceId);
@@ -669,6 +670,10 @@ async function handleApi(req, res, url) {
     const targetId = String(body.targetId ?? '');
     const action = String(body.action ?? '');
     if (!validateOverride(targetType, targetId, action)) return json(res, 400, { error: 'Invalid override.' });
+    const message = targetType === 'internet' && action === 'block' ? String(body.message ?? '').trim() : null;
+    if (targetType === 'internet' && action === 'block' && (!message || message.length > 240)) {
+      return json(res, 400, { error: 'Enter a message between 1 and 240 characters.' });
+    }
     if (targetType === 'target' && !db.prepare('SELECT 1 FROM device_targets WHERE device_id = ? AND target_key = ?').get(device.id, targetId)) {
       return json(res, 404, { error: 'Discovered target not found.' });
     }
@@ -684,13 +689,16 @@ async function handleApi(req, res, url) {
       effectiveUntil,
       source: 'dashboard',
       parentId: parent.id,
+      message,
     });
     audit(db, {
       parentId: parent.id,
       deviceId: device.id,
       eventType: 'override.dashboard',
-      summary: `${parent.display_name} set ${targetId} to ${action} on ${device.name}.`,
-      details: { targetType, targetId, action, effectiveUntil, overrideId: id },
+      summary: targetType === 'internet'
+        ? `${parent.display_name} ${action === 'block' ? 'paused' : 'restored'} internet access on ${device.name}.`
+        : `${parent.display_name} set ${targetId} to ${action} on ${device.name}.`,
+      details: { targetType, targetId, action, effectiveUntil, overrideId: id, message },
     });
     const current = db.prepare('SELECT * FROM devices WHERE id = ?').get(device.id);
     return json(res, 201, { overrideId: id, policy: resolvePolicy(db, current) });
@@ -796,7 +804,7 @@ const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, appBaseUrl);
     if (req.method === 'GET' && url.pathname === '/healthz') {
-      return json(res, 200, { ok: true, version: '0.1.0' });
+      return json(res, 200, { ok: true, version: '0.2.0' });
     }
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
     if (req.method === 'GET' && await serveStatic(res, url.pathname)) return;
