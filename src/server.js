@@ -206,6 +206,11 @@ function safeJson(value, fallback) {
   }
 }
 
+function supportsInternetPause(device) {
+  return device.platform !== 'ios'
+    && safeJson(device.capabilities_json, []).includes('internet-pause-message');
+}
+
 function normalizeWebsite(value) {
   const input = String(value ?? '').trim();
   if (!input || input.length > 2048) return null;
@@ -394,7 +399,7 @@ async function handleApi(req, res, url) {
       const body = await bodyJson(req);
       const appliedRevision = Math.max(0, Number(body.appliedRevision ?? device.applied_revision));
       db.prepare(`
-        UPDATE devices SET last_seen = ?, applied_revision = ?, status_json = ?, client_version = COALESCE(?, client_version), os_version = COALESCE(?, os_version)
+        UPDATE devices SET last_seen = ?, applied_revision = ?, status_json = ?, client_version = COALESCE(?, client_version), os_version = COALESCE(?, os_version), capabilities_json = COALESCE(?, capabilities_json)
         WHERE id = ?
       `).run(
         now,
@@ -402,6 +407,7 @@ async function handleApi(req, res, url) {
         JSON.stringify(body.status ?? {}),
         body.clientVersion ? String(body.clientVersion) : null,
         body.osVersion ? String(body.osVersion) : null,
+        Array.isArray(body.capabilities) ? JSON.stringify(body.capabilities) : null,
         device.id,
       );
       return noContent(res);
@@ -696,6 +702,9 @@ async function handleApi(req, res, url) {
     const message = targetType === 'internet' && action === 'block' ? String(body.message ?? '').trim() : null;
     if (targetType === 'internet' && action === 'block' && (!message || message.length > 240)) {
       return json(res, 400, { error: 'Enter a message between 1 and 240 characters.' });
+    }
+    if (targetType === 'internet' && action === 'block' && !supportsInternetPause(device)) {
+      return json(res, 409, { error: 'Update this device client before using Internet pause.' });
     }
     if (targetType === 'target' && !db.prepare('SELECT 1 FROM device_targets WHERE device_id = ? AND target_key = ?').get(device.id, targetId)) {
       return json(res, 404, { error: 'Discovered target not found.' });

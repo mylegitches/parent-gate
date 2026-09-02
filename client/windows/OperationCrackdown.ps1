@@ -488,6 +488,7 @@ function Send-Status {
             appliedRevision = [int]$Policy.revision
             clientVersion = $script:ClientVersion
             osVersion = [Environment]::OSVersion.VersionString
+            capabilities = @('process-enforcement', 'hosts-enforcement', 'target-scan', 'local-pin', 'internet-pause-message')
             status = $Status
         } | Out-Null
     }

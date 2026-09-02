@@ -102,15 +102,16 @@ function renderDevices() {
       button.classList.toggle('active', (button.dataset.masterAction === 'enable') === device.policy.masterEnabled);
     }
     const internetBlocked = Boolean(device.policy.internetBlocked);
+    const supportsInternetPause = device.capabilities.includes('internet-pause-message');
     $('.internet-panel', card).hidden = device.platform === 'ios';
     const removeDevice = $('[data-remove-device]', card);
     removeDevice.disabled = internetBlocked;
     removeDevice.title = internetBlocked ? 'Restore internet access before removing this device.' : 'Remove this device from the dashboard.';
     const internetState = $('.internet-state', card);
-    internetState.textContent = internetBlocked ? 'Paused' : 'Available';
+    internetState.textContent = internetBlocked ? 'Paused' : supportsInternetPause ? 'Available' : 'Update required';
     internetState.classList.toggle('blocked', internetBlocked);
     $('.internet-paused', card).hidden = !internetBlocked;
-    $('.internet-pause-form', card).hidden = internetBlocked;
+    $('.internet-pause-form', card).hidden = internetBlocked || !supportsInternetPause;
     $('.internet-message', card).textContent = device.policy.internetMessage || 'Internet access is paused.';
 
     const serviceList = $('.service-list', card);

@@ -107,6 +107,22 @@ test('setup, enrollment, direct controls, custom websites, and policy form one w
       body: JSON.stringify({ targetType: 'internet', targetId: 'access', action: 'block', message: '' }),
     });
     assert.equal(missingMessage.status, 400);
+    const unsupportedPause = await fetch(`${baseUrl}/api/devices/${enrollment.deviceId}/override`, {
+      method: 'PUT',
+      headers: parentHeaders,
+      body: JSON.stringify({ targetType: 'internet', targetId: 'access', action: 'block', message: 'Please feed the dogs.' }),
+    });
+    assert.equal(unsupportedPause.status, 409);
+    await fetch(`${baseUrl}/api/client/v1/status`, {
+      method: 'POST',
+      headers: clientHeaders,
+      body: JSON.stringify({
+        appliedRevision: 0,
+        clientVersion: '0.2.0',
+        capabilities: ['target-scan', 'internet-pause-message'],
+        status: { state: 'applied' },
+      }),
+    });
     const pause = await responseJson(await fetch(`${baseUrl}/api/devices/${enrollment.deviceId}/override`, {
       method: 'PUT',
       headers: parentHeaders,

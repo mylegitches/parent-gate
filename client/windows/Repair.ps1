@@ -30,6 +30,13 @@ if (-not (Test-Path -LiteralPath $configPath)) {
 if (-not (Test-Path -LiteralPath $agentSource)) {
     throw "Client source is missing: $agentSource"
 }
+$cachedPolicyPath = Join-Path $installDirectory 'policy.json'
+if (Test-Path -LiteralPath $cachedPolicyPath) {
+    $cachedPolicy = Get-Content -LiteralPath $cachedPolicyPath -Raw | ConvertFrom-Json
+    if ($cachedPolicy.internetBlocked) {
+        throw 'Restore internet access for this device in the dashboard, wait about 15 seconds, and run this repair again.'
+    }
+}
 
 $listener = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue
 foreach ($connection in @($listener)) {
