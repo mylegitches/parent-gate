@@ -92,7 +92,10 @@ function renderDevices() {
     const card = $('#device-template').content.firstElementChild.cloneNode(true);
     card.dataset.deviceId = device.id;
     $('.device-name', card).textContent = device.name;
-    $('.device-meta', card).textContent = `${device.platform} · ${formatLastSeen(device)}`;
+    const versionState = device.clientVersion
+      ? `v${device.clientVersion}${device.updateAvailable ? ` → v${device.latestClientVersion}` : ''}`
+      : 'version unknown';
+    $('.device-meta', card).textContent = `${device.platform} · ${versionState} · ${formatLastSeen(device)}`;
     $('.status-dot', card).classList.toggle('online', device.online);
     const pending = device.desiredRevision !== device.appliedRevision;
     const policyStatus = $('.policy-status', card);

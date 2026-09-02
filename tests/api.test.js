@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash, createHmac } from 'node:crypto';
 
 async function waitForServer(baseUrl, child) {
   for (let attempt = 0; attempt < 60; attempt += 1) {
@@ -64,6 +65,19 @@ test('setup, enrollment, direct controls, custom websites, and policy form one w
     }));
     const clientHeaders = { Authorization: `Bearer ${enrollment.credential}`, 'Content-Type': 'application/json' };
 
+    const update = await responseJson(await fetch(`${baseUrl}/api/client/v1/update`, { headers: clientHeaders }));
+    assert.equal(update.version, '0.3.0');
+    assert.deepEqual(update.files.map((file) => file.name), ['OperationCrackdown.ps1', 'ShowInternetNotice.ps1', 'ApplyUpdate.ps1']);
+    const updateCanonical = [update.version, ...update.files.map((file) => `${file.name}|${file.sha256}|${file.url}`)].join('\n');
+    const updateKey = createHash('sha256').update(enrollment.credential, 'utf8').digest();
+    assert.equal(createHmac('sha256', updateKey).update(updateCanonical).digest('hex'), update.signature);
+    for (const file of update.files) {
+      const fileResponse = await fetch(`${baseUrl}${file.url}`, { headers: clientHeaders });
+      assert.equal(fileResponse.ok, true);
+      const bytes = Buffer.from(await fileResponse.arrayBuffer());
+      assert.equal(createHash('sha256').update(bytes).digest('hex'), file.sha256);
+    }
+
     await responseJson(await fetch(`${baseUrl}/api/client/v1/targets`, {
       method: 'POST',
       headers: clientHeaders,
@@ -118,11 +132,13 @@ test('setup, enrollment, direct controls, custom websites, and policy form one w
       headers: clientHeaders,
       body: JSON.stringify({
         appliedRevision: 0,
-        clientVersion: '0.2.0',
-        capabilities: ['target-scan', 'internet-pause-message'],
+        clientVersion: '0.3.0',
+        capabilities: ['target-scan', 'internet-pause-message', 'self-update'],
         status: { state: 'applied' },
       }),
     });
+    const currentUpdate = await fetch(`${baseUrl}/api/client/v1/update`, { headers: clientHeaders });
+    assert.equal(currentUpdate.status, 204);
     const pause = await responseJson(await fetch(`${baseUrl}/api/devices/${enrollment.deviceId}/override`, {
       method: 'PUT',
       headers: parentHeaders,
@@ -150,6 +166,9 @@ test('setup, enrollment, direct controls, custom websites, and policy form one w
     assert.equal(policy.customWebsites[0].blocked, true);
     assert.equal(policy.pinVerifiers.length, 1);
     const dashboardDevices = await responseJson(await fetch(`${baseUrl}/api/devices`, { headers: parentHeaders }));
+    assert.equal(dashboardDevices.devices[0].clientVersion, '0.3.0');
+    assert.equal(dashboardDevices.devices[0].latestClientVersion, '0.3.0');
+    assert.equal(dashboardDevices.devices[0].updateAvailable, false);
     assert.equal(dashboardDevices.devices[0].applicationActivity.length, 2);
     assert.equal(dashboardDevices.devices[0].applicationActivity[0].eventType, 'stopped');
     assert.equal(dashboardDevices.devices[0].websiteActivity.length, 1);

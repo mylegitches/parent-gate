@@ -10,7 +10,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$script:ClientVersion = '0.2.0'
+$script:ClientVersion = '0.3.0'
 $script:ConfigPath = Join-Path $DataDirectory 'config.json'
 $script:PolicyPath = Join-Path $DataDirectory 'policy.json'
 $script:StatusPath = Join-Path $DataDirectory 'status.json'
@@ -21,6 +21,7 @@ $script:FirewallStatePath = Join-Path $DataDirectory 'internet-firewall-backup.j
 $script:InternetStatePath = Join-Path $DataDirectory 'internet-pause-state.json'
 $script:NoticeMarkerPath = Join-Path $DataDirectory 'last-internet-notice.txt'
 $script:NoticeScriptPath = Join-Path $DataDirectory 'ShowInternetNotice.ps1'
+$script:UpdaterScriptPath = Join-Path $DataDirectory 'ApplyUpdate.ps1'
 $script:FirewallRuleGroup = 'Operation Crackdown Control Channel'
 $script:LocalPort = 8765
 $script:LatestPolicy = $null
@@ -32,6 +33,7 @@ $script:NextInternetEnforcement = [DateTime]::MinValue
 $script:InternetPauseKnownDisabled = $false
 $script:ObservedApplications = @{}
 $script:ApplicationMonitorInitialized = $false
+$script:UpdateStatus = 'current'
 
 function Test-IsAdministrator {
     $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -73,6 +75,76 @@ function Test-ConstantTimeEqual {
         $difference = $difference -bor ($Left[$index] -bxor $Right[$index])
     }
     return $difference -eq 0
+}
+
+function ConvertFrom-Hex {
+    param([string]$Value)
+    if ($Value.Length % 2 -ne 0) { throw 'Invalid hexadecimal value.' }
+    $bytes = New-Object byte[] ($Value.Length / 2)
+    for ($index = 0; $index -lt $bytes.Length; $index++) {
+        $bytes[$index] = [Convert]::ToByte($Value.Substring($index * 2, 2), 16)
+    }
+    return $bytes
+}
+
+function Test-UpdateManifestSignature {
+    param($Manifest)
+    if ([string]$Manifest.signatureAlgorithm -ne 'device-hmac-sha256') { return $false }
+    $lines = New-Object Collections.Generic.List[string]
+    $lines.Add([string]$Manifest.version)
+    foreach ($file in @($Manifest.files)) {
+        $lines.Add("$([string]$file.name)|$([string]$file.sha256)|$([string]$file.url)")
+    }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $key = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($script:Credential)) }
+    finally { $sha.Dispose() }
+    $hmac = New-Object Security.Cryptography.HMACSHA256 (,$key)
+    try { $actual = $hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes(($lines -join "`n"))) }
+    finally { $hmac.Dispose() }
+    try { $expected = ConvertFrom-Hex ([string]$Manifest.signature) }
+    catch { return $false }
+    return Test-ConstantTimeEqual $actual $expected
+}
+
+function Start-ClientUpdate {
+    if ($script:LatestPolicy -and $script:LatestPolicy.internetBlocked) {
+        $script:UpdateStatus = 'deferred-internet-paused'
+        return $false
+    }
+    $manifest = Invoke-ClientApi -Method GET -Path '/api/client/v1/update' -TimeoutSec 20
+    if ($null -eq $manifest) {
+        $script:UpdateStatus = 'current'
+        return $false
+    }
+    try {
+        $available = [version]([string]$manifest.version)
+        $installed = [version]$script:ClientVersion
+    }
+    catch { throw 'The dashboard returned an invalid client update version.' }
+    if ($available -le $installed) {
+        $script:UpdateStatus = 'current'
+        return $false
+    }
+    if (-not (Test-UpdateManifestSignature $manifest)) { throw 'Client update signature verification failed.' }
+    if (-not (Test-Path -LiteralPath $script:UpdaterScriptPath)) { throw 'The installed update helper is missing.' }
+
+    $stagingDirectory = Join-Path $DataDirectory "update-staging-$($manifest.version)"
+    New-Item -ItemType Directory -Path $stagingDirectory -Force | Out-Null
+    $headers = @{ Authorization = "Bearer $script:Credential" }
+    foreach ($file in @($manifest.files)) {
+        $name = [string]$file.name
+        if ($name -notmatch '^[A-Za-z0-9.-]+$') { throw "Invalid update filename: $name" }
+        $destination = Join-Path $stagingDirectory $name
+        $uri = "$($script:Config.serverUrl.TrimEnd('/'))$([string]$file.url)"
+        Invoke-WebRequest -Uri $uri -Method GET -Headers $headers -UseBasicParsing -TimeoutSec 30 -OutFile $destination
+        $actualHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualHash -ne ([string]$file.sha256).ToLowerInvariant()) { throw "Update file verification failed: $name" }
+    }
+
+    $script:UpdateStatus = "installing-$($manifest.version)"
+    $arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$script:UpdaterScriptPath`" -StagingDirectory `"$stagingDirectory`" -ExpectedVersion `"$($manifest.version)`" -ParentProcessId $PID"
+    Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList $arguments -WindowStyle Hidden | Out-Null
+    return $true
 }
 
 function Test-PinVerifier {
@@ -156,7 +228,7 @@ function Invoke-Enrollment {
         platform = 'windows'
         osVersion = [Environment]::OSVersion.VersionString
         clientVersion = $script:ClientVersion
-        capabilities = @('process-enforcement', 'hosts-enforcement', 'target-scan', 'local-pin', 'internet-pause-message')
+        capabilities = @('process-enforcement', 'hosts-enforcement', 'target-scan', 'local-pin', 'internet-pause-message', 'self-update')
     }
     $response = Invoke-RestMethod -Uri "$($ServerUrl.TrimEnd('/'))/api/client/v1/enroll" -Method Post -ContentType 'application/json' -Body ($body | ConvertTo-Json -Depth 5) -TimeoutSec 20
     $config = @{
@@ -476,6 +548,8 @@ function Apply-Policy {
         pendingApplicationEvents = @(Get-PendingApplicationEvents).Count
         pendingWebsiteEvents = @(Get-PendingWebsiteEvents).Count
         internetBlocked = [bool]$Policy.internetBlocked
+        clientVersion = $script:ClientVersion
+        updateStatus = $script:UpdateStatus
     }
     Save-JsonFile $script:StatusPath $status
     return $status
@@ -488,7 +562,7 @@ function Send-Status {
             appliedRevision = [int]$Policy.revision
             clientVersion = $script:ClientVersion
             osVersion = [Environment]::OSVersion.VersionString
-            capabilities = @('process-enforcement', 'hosts-enforcement', 'target-scan', 'local-pin', 'internet-pause-message')
+            capabilities = @('process-enforcement', 'hosts-enforcement', 'target-scan', 'local-pin', 'internet-pause-message', 'self-update')
             status = $Status
         } | Out-Null
     }
@@ -820,6 +894,7 @@ function Start-Agent {
     $nextScan = [DateTime]::MinValue
     $nextApplicationCheck = [DateTime]::MinValue
     $nextApplicationSync = [DateTime]::MinValue
+    $nextUpdateCheck = [DateTime]::MinValue
     try {
         while ($true) {
             $now = [DateTime]::UtcNow
@@ -854,6 +929,16 @@ function Start-Agent {
                     Save-JsonFile $script:PolicyPath $script:LatestPolicy
                     Apply-Policy $script:LatestPolicy | Out-Null
                 }
+            }
+            if ($now -ge $nextUpdateCheck) {
+                try {
+                    if (Start-ClientUpdate) { return }
+                }
+                catch {
+                    $script:UpdateStatus = 'failed'
+                    $script:LastError = "Client update check failed: $($_.Exception.Message)"
+                }
+                $nextUpdateCheck = $now.AddMinutes(5)
             }
             if ($now -ge $nextScan) {
                 Send-Targets

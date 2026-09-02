@@ -551,7 +551,7 @@ Safe and unsurprising behavior matters more than aggressive enforcement.
 - If hosts-file enforcement fails, application enforcement continues and the dashboard shows a degraded status.
 - If an Offline rule prevents the client from reaching the dashboard health endpoint, the client immediately rolls that rule back.
 - If an Offline policy expires while the dashboard is unreachable, the client removes the blocking firewall rules using its local clock.
-- If the client is out of date, the dashboard warns the parents but does not silently install arbitrary updates.
+- A Windows client installs only a newer dashboard-published runtime whose authenticated manifest and individual file hashes validate. It defers updates while internet access is paused and rolls back if the new agent does not report healthy.
 - If an iOS device has not acknowledged a requested revision, the dashboard continues to show the change as pending instead of presenting an unverified state as successful.
 - If a local parent override cannot reach the dashboard, the client applies it locally, stores it durably, and clearly reports that synchronization is pending.
 - If a queued local override conflicts with a newer dashboard revision, the newer dashboard state wins and the client reports the rejected local operation.
@@ -606,7 +606,7 @@ Routine process detections do not need to be retained. If they are retained for 
 - Verified control-plane bypass through the Android VPN.
 - Deep Focus profile.
 - TOTP authentication.
-- Simple client-update notification.
+- Authenticated automatic Windows client updates with health verification and rollback.
 - Backup and restore documentation.
 
 ### Phase 3: iOS client
@@ -628,7 +628,7 @@ Routine process detections do not need to be retained. If they are retained for 
 - Browser extension for stronger website handling.
 - OpenID Connect integration.
 - Push updates using Server-Sent Events or WebSockets.
-- Signed automatic client updates.
+- Native Android and iOS update-version reporting; their packages continue through their platform stores or managed deployment channels.
 - Progressive web app installation on parent phones.
 
 ## Acceptance criteria for the MVP

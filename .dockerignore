@@ -1,7 +1,12 @@
 .git
 .gitignore
 data
-client
+client/*
+!client/windows/
+client/windows/*
+!client/windows/OperationCrackdown.ps1
+!client/windows/ShowInternetNotice.ps1
+!client/windows/ApplyUpdate.ps1
+!client/windows/update.json
 tests
 *.log
-

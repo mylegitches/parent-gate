@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { openDatabase, audit } from './db.js';
 import {
   hashPassword,
@@ -19,12 +19,19 @@ import { calculateEffectiveUntil, resolvePolicy, validateOverride } from './poli
 const port = Number(process.env.PORT ?? 8080);
 const dataDir = resolve(process.env.DATA_DIR ?? './data');
 const publicDir = resolve(dirname(fileURLToPath(import.meta.url)), '../public');
+const windowsClientDir = resolve(dirname(fileURLToPath(import.meta.url)), '../client/windows');
 const cookieSecure = String(process.env.COOKIE_SECURE ?? 'true').toLowerCase() === 'true';
 const sessionDays = Math.max(1, Number(process.env.SESSION_DAYS ?? 14));
 const householdTimezone = process.env.HOUSEHOLD_TIMEZONE ?? 'America/Chicago';
 const appBaseUrl = process.env.APP_BASE_URL || `http://localhost:${port}`;
 const db = openDatabase(dataDir);
 const loginAttempts = new Map();
+const windowsUpdateDefinition = JSON.parse(await readFile(join(windowsClientDir, 'update.json'), 'utf8'));
+const windowsUpdateFiles = new Map(await Promise.all(windowsUpdateDefinition.files.map(async (name) => {
+  if (!/^[A-Za-z0-9.-]+$/.test(name)) throw new Error(`Invalid Windows update filename: ${name}`);
+  const content = await readFile(join(windowsClientDir, name));
+  return [name, { content, sha256: createHash('sha256').update(content).digest('hex') }];
+})));
 
 const mimeTypes = {
   '.html': 'text/html; charset=utf-8',
@@ -185,6 +192,8 @@ function deviceView(device) {
     platform: device.platform,
     osVersion: device.os_version,
     clientVersion: device.client_version,
+    latestClientVersion: device.platform === 'windows' ? windowsUpdateDefinition.version : null,
+    updateAvailable: device.platform === 'windows' && device.client_version !== windowsUpdateDefinition.version,
     capabilities: safeJson(device.capabilities_json, []),
     desiredRevision: device.desired_revision,
     appliedRevision: device.applied_revision,
@@ -209,6 +218,23 @@ function safeJson(value, fallback) {
 function supportsInternetPause(device) {
   return device.platform !== 'ios'
     && safeJson(device.capabilities_json, []).includes('internet-pause-message');
+}
+
+function windowsUpdateManifest(device) {
+  const files = [...windowsUpdateFiles].map(([name, file]) => ({
+    name,
+    sha256: file.sha256,
+    url: `/api/client/v1/update/files/${encodeURIComponent(name)}`,
+  }));
+  const canonical = [windowsUpdateDefinition.version, ...files.map((file) => `${file.name}|${file.sha256}|${file.url}`)].join('\n');
+  const signature = createHmac('sha256', Buffer.from(device.credential_hash, 'hex')).update(canonical).digest('hex');
+  return {
+    version: windowsUpdateDefinition.version,
+    releasedAt: windowsUpdateDefinition.releasedAt,
+    files,
+    signatureAlgorithm: 'device-hmac-sha256',
+    signature,
+  };
 }
 
 function normalizeWebsite(value) {
@@ -393,6 +419,27 @@ async function handleApi(req, res, url) {
       db.prepare('UPDATE devices SET last_seen = ? WHERE id = ?').run(now, device.id);
       const refreshed = db.prepare('SELECT * FROM devices WHERE id = ?').get(device.id);
       return json(res, 200, resolveClientPolicy(refreshed));
+    }
+
+    if (req.method === 'GET' && path === '/api/client/v1/update') {
+      if (device.platform !== 'windows' || device.client_version === windowsUpdateDefinition.version) return noContent(res);
+      return json(res, 200, windowsUpdateManifest(device));
+    }
+
+    const updateFileMatch = path.match(/^\/api\/client\/v1\/update\/files\/([^/]+)$/);
+    if (req.method === 'GET' && updateFileMatch) {
+      if (device.platform !== 'windows') return json(res, 404, { error: 'Update file not found.' });
+      const name = decodeURIComponent(updateFileMatch[1]);
+      const file = windowsUpdateFiles.get(name);
+      if (!file) return json(res, 404, { error: 'Update file not found.' });
+      res.writeHead(200, securityHeaders({
+        'Content-Type': 'application/octet-stream',
+        'Content-Length': file.content.length,
+        'Cache-Control': 'no-store',
+        'X-Content-SHA256': file.sha256,
+      }));
+      res.end(file.content);
+      return;
     }
 
     if (req.method === 'POST' && path === '/api/client/v1/status') {
@@ -836,7 +883,7 @@ const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, appBaseUrl);
     if (req.method === 'GET' && url.pathname === '/healthz') {
-      return json(res, 200, { ok: true, version: '0.2.0' });
+      return json(res, 200, { ok: true, version: '0.3.0' });
     }
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
     if (req.method === 'GET' && await serveStatic(res, url.pathname)) return;

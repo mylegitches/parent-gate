@@ -13,6 +13,8 @@ powershell.exe -ExecutionPolicy Bypass -File .\Install.ps1 `
   -DeviceName "Daughter PC"
 ```
 
+Version 0.3.0 is the one-time Windows update that enables self-updating. After it is installed, the elevated agent checks the enrolled dashboard every five minutes. Normal target, website, timer, message, and policy changes are already data-driven and do not require a client release. For a runtime release, the client accepts only a newer per-device authenticated manifest, verifies every downloaded file by SHA-256, preserves enrollment, and rolls back if the replacement does not report healthy. Updates are deferred whenever whole-internet pause is active.
+
 The installer:
 
 - Enrolls the installation with its own device ID and credential.
@@ -67,4 +69,3 @@ Apple does not permit installed-app enumeration or a permanently listening backg
 - Uses foreground synchronization today; APNs-assisted background synchronization remains required for reliable remote delivery.
 
 An Apple Developer account, approved Family Controls entitlement, signing profiles, macOS, and Xcode are mandatory. Until push synchronization and offline queue persistence are completed and device-tested, the iOS source should be considered a functional foundation rather than a production household client.
-

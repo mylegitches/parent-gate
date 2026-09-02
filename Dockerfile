@@ -9,6 +9,7 @@ WORKDIR /app
 COPY package.json ./
 COPY src ./src
 COPY public ./public
+COPY client/windows ./client/windows
 
 RUN addgroup -S crackdown && adduser -S -G crackdown crackdown \
     && mkdir -p /data && chown -R crackdown:crackdown /app /data
