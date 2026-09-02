@@ -1,6 +1,6 @@
 {
   "name": "operation-crackdown",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "Household focus dashboard and device policy service",
   "type": "module",

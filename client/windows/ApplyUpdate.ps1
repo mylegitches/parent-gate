@@ -39,6 +39,11 @@ function Restore-InternetState {
                 $saved = [string]$profile.defaultOutboundAction
                 $action = if ($saved -eq 'Block') { 'Block' } elseif ($saved -eq 'Allow') { 'Allow' } else { 'NotConfigured' }
                 Set-NetFirewallProfile -Name ([string]$profile.name) -DefaultOutboundAction $action -ErrorAction Stop
+                if ($null -ne $profile.enabled) {
+                    $savedEnabled = [string]$profile.enabled
+                    $enabled = if ($savedEnabled -eq 'True') { 'True' } elseif ($savedEnabled -eq 'False') { 'False' } else { 'NotConfigured' }
+                    Set-NetFirewallProfile -Name ([string]$profile.name) -Enabled $enabled -ErrorAction Stop
+                }
             }
             catch { $restoreErrors.Add("Firewall profile $($profile.name): $($_.Exception.Message)") }
         }

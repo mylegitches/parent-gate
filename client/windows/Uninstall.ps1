@@ -22,6 +22,11 @@ if ($firewallState) {
         $saved = [string]$profile.defaultOutboundAction
         $action = if ($saved -eq 'Block') { 'Block' } elseif ($saved -eq 'Allow') { 'Allow' } else { 'NotConfigured' }
         Set-NetFirewallProfile -Name ([string]$profile.name) -DefaultOutboundAction $action
+        if ($null -ne $profile.enabled) {
+            $savedEnabled = [string]$profile.enabled
+            $enabled = if ($savedEnabled -eq 'True') { 'True' } elseif ($savedEnabled -eq 'False') { 'False' } else { 'NotConfigured' }
+            Set-NetFirewallProfile -Name ([string]$profile.name) -Enabled $enabled
+        }
     }
 }
 Get-NetFirewallRule -Group 'Operation Crackdown Control Channel' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue

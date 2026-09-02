@@ -10,7 +10,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$script:ClientVersion = '0.3.1'
+$script:ClientVersion = '0.3.2'
 $script:ConfigPath = Join-Path $DataDirectory 'config.json'
 $script:PolicyPath = Join-Path $DataDirectory 'policy.json'
 $script:StatusPath = Join-Path $DataDirectory 'status.json'
@@ -448,13 +448,20 @@ function Get-RestoredOutboundAction {
     return 'NotConfigured'
 }
 
+function Get-RestoredProfileEnabled {
+    param([string]$Value)
+    if ($Value -eq 'True') { return 'True' }
+    if ($Value -eq 'False') { return 'False' }
+    return 'NotConfigured'
+}
+
 function Enable-InternetPause {
     if (-not (Test-IsAdministrator)) { throw 'Internet pause requires an elevated client.' }
     $endpoint = Get-ControlEndpoint
     $state = Read-JsonFile $script:FirewallStatePath $null
     if (-not $state) {
         $profiles = @(Get-NetFirewallProfile | ForEach-Object {
-            @{ name = [string]$_.Name; defaultOutboundAction = [string]$_.DefaultOutboundAction }
+            @{ name = [string]$_.Name; enabled = [string]$_.Enabled; defaultOutboundAction = [string]$_.DefaultOutboundAction }
         })
         $state = @{ profiles = $profiles; controlAddresses = @(); controlPort = 0; disabledAllowRules = @() }
         Save-JsonFile $script:FirewallStatePath $state
@@ -485,8 +492,8 @@ function Enable-InternetPause {
         }
     }
     foreach ($profile in Get-NetFirewallProfile) {
-        if ([string]$profile.DefaultOutboundAction -ne 'Block') {
-            Set-NetFirewallProfile -Name $profile.Name -DefaultOutboundAction Block
+        if ([string]$profile.Enabled -ne 'True' -or [string]$profile.DefaultOutboundAction -ne 'Block') {
+            Set-NetFirewallProfile -Name $profile.Name -Enabled True -DefaultOutboundAction Block
         }
     }
     try {
@@ -511,6 +518,10 @@ function Disable-InternetPause {
             try {
                 $action = Get-RestoredOutboundAction ([string]$profile.defaultOutboundAction)
                 Set-NetFirewallProfile -Name ([string]$profile.name) -DefaultOutboundAction $action -ErrorAction Stop
+                if ($null -ne $profile.enabled) {
+                    $enabled = Get-RestoredProfileEnabled ([string]$profile.enabled)
+                    Set-NetFirewallProfile -Name ([string]$profile.name) -Enabled $enabled -ErrorAction Stop
+                }
             }
             catch { $restoreErrors.Add("Firewall profile $($profile.name): $($_.Exception.Message)") }
         }
@@ -565,6 +576,8 @@ function Apply-Policy {
     }
     try { Set-ManagedHosts @(Get-BlockedDomains $Policy) }
     catch { $errors.Add("Website enforcement failed: $($_.Exception.Message)") }
+    try { Update-InternetNotice $Policy }
+    catch { $errors.Add("Internet pause message failed: $($_.Exception.Message)") }
     try {
         if ($Policy.internetBlocked) {
             if ([DateTime]::UtcNow -ge $script:NextInternetEnforcement) {
@@ -578,8 +591,6 @@ function Apply-Policy {
         }
     }
     catch { $errors.Add("Internet pause enforcement failed: $($_.Exception.Message)") }
-    try { Update-InternetNotice $Policy }
-    catch { $errors.Add("Internet pause message failed: $($_.Exception.Message)") }
     $script:NextEnforcement = [DateTime]::UtcNow.AddSeconds(2)
     $status = @{
         state = if ($errors.Count -eq 0) { 'applied' } else { 'degraded' }
