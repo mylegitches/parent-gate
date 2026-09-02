@@ -10,7 +10,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$script:ClientVersion = '0.3.2'
+$script:ClientVersion = '0.3.3'
 $script:ConfigPath = Join-Path $DataDirectory 'config.json'
 $script:PolicyPath = Join-Path $DataDirectory 'policy.json'
 $script:StatusPath = Join-Path $DataDirectory 'status.json'
@@ -466,42 +466,49 @@ function Enable-InternetPause {
         $state = @{ profiles = $profiles; controlAddresses = @(); controlPort = 0; disabledAllowRules = @() }
         Save-JsonFile $script:FirewallStatePath $state
     }
-    $addressKey = (@($endpoint.Addresses) -join ',')
-    $existingKey = (@($state.controlAddresses) -join ',')
-    if ($addressKey -ne $existingKey -or [int]$state.controlPort -ne [int]$endpoint.Port) {
-        Remove-ControlFirewallRules
-        $powershellPath = Join-Path $PSHOME 'powershell.exe'
-        New-NetFirewallRule -DisplayName 'Operation Crackdown dashboard access' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Program $powershellPath -Protocol TCP -RemoteAddress $endpoint.Addresses -RemotePort $endpoint.Port -Profile Any | Out-Null
-        New-NetFirewallRule -DisplayName 'Operation Crackdown DNS (UDP)' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Protocol UDP -RemotePort 53 -Profile Any | Out-Null
-        New-NetFirewallRule -DisplayName 'Operation Crackdown DNS (TCP)' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Protocol TCP -RemotePort 53 -Profile Any | Out-Null
-        New-NetFirewallRule -DisplayName 'Operation Crackdown DHCP (IPv4)' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Protocol UDP -LocalPort 68 -RemotePort 67 -Profile Any | Out-Null
-        New-NetFirewallRule -DisplayName 'Operation Crackdown DHCP (IPv6)' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Protocol UDP -LocalPort 546 -RemotePort 547 -Profile Any | Out-Null
-        $state.controlAddresses = @($endpoint.Addresses)
-        $state.controlPort = [int]$endpoint.Port
-        Save-JsonFile $script:FirewallStatePath $state
-    }
-    $alreadyDisabled = @($state.disabledAllowRules)
-    $enabledAllowRules = @(Get-NetFirewallRule -PolicyStore PersistentStore -Direction Outbound -Action Allow -Enabled True -ErrorAction Stop |
-        Where-Object { $_.Group -ne $script:FirewallRuleGroup })
-    $newRuleNames = @($enabledAllowRules.Name | Where-Object { $_ -notin $alreadyDisabled } | Sort-Object -Unique)
-    if ($newRuleNames.Count -gt 0) {
-        $state.disabledAllowRules = @($alreadyDisabled + $newRuleNames | Sort-Object -Unique)
-        Save-JsonFile $script:FirewallStatePath $state
-        foreach ($name in $newRuleNames) {
-            Set-NetFirewallRule -PolicyStore PersistentStore -Name $name -Enabled False -ErrorAction Stop
-        }
-    }
-    foreach ($profile in Get-NetFirewallProfile) {
-        if ([string]$profile.Enabled -ne 'True' -or [string]$profile.DefaultOutboundAction -ne 'Block') {
-            Set-NetFirewallProfile -Name $profile.Name -Enabled True -DefaultOutboundAction Block
-        }
-    }
     try {
+        $addressKey = (@($endpoint.Addresses) -join ',')
+        $existingKey = (@($state.controlAddresses) -join ',')
+        if ($addressKey -ne $existingKey -or [int]$state.controlPort -ne [int]$endpoint.Port) {
+            Remove-ControlFirewallRules
+            $powershellPath = Join-Path $PSHOME 'powershell.exe'
+            New-NetFirewallRule -DisplayName 'Operation Crackdown dashboard access' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Program $powershellPath -Protocol TCP -RemoteAddress $endpoint.Addresses -RemotePort $endpoint.Port -Profile Any | Out-Null
+            New-NetFirewallRule -DisplayName 'Operation Crackdown DNS (UDP)' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Protocol UDP -RemotePort 53 -Profile Any | Out-Null
+            New-NetFirewallRule -DisplayName 'Operation Crackdown DNS (TCP)' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Protocol TCP -RemotePort 53 -Profile Any | Out-Null
+            New-NetFirewallRule -DisplayName 'Operation Crackdown DHCP (IPv4)' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Protocol UDP -LocalPort 68 -RemotePort 67 -Profile Any | Out-Null
+            New-NetFirewallRule -DisplayName 'Operation Crackdown DHCP (IPv6)' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Protocol UDP -LocalPort 546 -RemotePort 547 -Profile Any | Out-Null
+            $state.controlAddresses = @($endpoint.Addresses)
+            $state.controlPort = [int]$endpoint.Port
+            Save-JsonFile $script:FirewallStatePath $state
+        }
+
+        $alreadyDisabled = @($state.disabledAllowRules)
+        $enabledAllowRules = @(Get-NetFirewallRule -PolicyStore PersistentStore -Direction Outbound -Action Allow -Enabled True -ErrorAction Stop |
+            Where-Object { $_.Group -ne $script:FirewallRuleGroup })
+        $newRuleNames = @($enabledAllowRules.Name | Where-Object { $_ -notin $alreadyDisabled } | Sort-Object -Unique)
+        if ($newRuleNames.Count -gt 0) {
+            $state.disabledAllowRules = @($alreadyDisabled + $newRuleNames | Sort-Object -Unique)
+            Save-JsonFile $script:FirewallStatePath $state
+        }
+
+        # Switch the effective profiles first so ordinary applications lose access
+        # immediately. Disabling explicit allow rules is then a fast cleanup step.
+        foreach ($profile in Get-NetFirewallProfile) {
+            if ([string]$profile.Enabled -ne 'True' -or [string]$profile.DefaultOutboundAction -ne 'Block') {
+                Set-NetFirewallProfile -Name $profile.Name -Enabled True -DefaultOutboundAction Block -ErrorAction Stop
+            }
+        }
+        if ($newRuleNames.Count -gt 0) {
+            Set-NetFirewallRule -PolicyStore PersistentStore -Name $newRuleNames -Enabled False -ErrorAction Stop
+        }
+
         Invoke-WebRequest -Uri "$($script:Config.serverUrl.TrimEnd('/'))/healthz" -UseBasicParsing -TimeoutSec 8 | Out-Null
     }
     catch {
-        Disable-InternetPause
-        throw "Internet pause was rolled back because the dashboard control channel failed: $($_.Exception.Message)"
+        $pauseError = $_.Exception.Message
+        try { Disable-InternetPause }
+        catch { throw "Internet pause failed ($pauseError) and rollback was incomplete: $($_.Exception.Message)" }
+        throw "Internet pause was safely rolled back: $pauseError"
     }
     $script:InternetPauseKnownDisabled = $false
 }
