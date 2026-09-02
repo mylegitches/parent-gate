@@ -52,6 +52,8 @@ input, select, textarea { width: 100%; border: 1px solid #cbd2df; border-radius:
 .device-card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 20px; box-shadow: var(--shadow); }
 .device-header, .section-heading { display: flex; justify-content: space-between; gap: 14px; align-items: center; }
 .device-header { padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+.device-header-actions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
+.remove-device { font-size: .76rem; }
 .device-title-row { display: flex; align-items: center; gap: 9px; }
 .device-title-row h2 { margin-bottom: 0; font-size: 1.22rem; }
 .device-meta { margin: 5px 0 0 19px; font-size: .84rem; }

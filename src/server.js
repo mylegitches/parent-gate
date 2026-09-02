@@ -660,6 +660,29 @@ async function handleApi(req, res, url) {
     audit(db, { parentId: parent.id, deviceId: device.id, eventType: 'device.renamed', summary: `${parent.display_name} renamed ${device.name} to ${name}.` });
     return json(res, 200, { ...deviceView(db.prepare('SELECT * FROM devices WHERE id = ?').get(device.id)) });
   }
+  if (deviceMatch && req.method === 'DELETE') {
+    const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(deviceMatch[1]);
+    if (!device) return json(res, 404, { error: 'Device not found.' });
+    if (resolvePolicy(db, device).internetBlocked) {
+      return json(res, 409, { error: 'Restore this device’s internet access before removing it.' });
+    }
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      audit(db, {
+        parentId: parent.id,
+        deviceId: device.id,
+        eventType: 'device.removed',
+        summary: `${parent.display_name} removed ${device.name} from the dashboard.`,
+        details: { name: device.name, platform: device.platform },
+      });
+      db.prepare('DELETE FROM devices WHERE id = ?').run(device.id);
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+    return noContent(res);
+  }
 
   const overrideMatch = path.match(/^\/api\/devices\/([^/]+)\/override$/);
   if (overrideMatch && req.method === 'PUT') {

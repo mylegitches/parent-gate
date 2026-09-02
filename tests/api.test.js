@@ -114,6 +114,11 @@ test('setup, enrollment, direct controls, custom websites, and policy form one w
     }));
     assert.equal(pause.policy.internetBlocked, true);
     assert.equal(pause.policy.internetMessage, 'Please feed the dogs.');
+    const pausedDelete = await fetch(`${baseUrl}/api/devices/${enrollment.deviceId}`, {
+      method: 'DELETE',
+      headers: parentHeaders,
+    });
+    assert.equal(pausedDelete.status, 409);
     const restore = await responseJson(await fetch(`${baseUrl}/api/devices/${enrollment.deviceId}/override`, {
       method: 'PUT',
       headers: parentHeaders,
@@ -162,6 +167,16 @@ test('setup, enrollment, direct controls, custom websites, and policy form one w
       body: JSON.stringify({ ...localOperation, operationId: crypto.randomUUID() }),
     });
     assert.equal(staleResponse.status, 409);
+
+    const deleteResponse = await fetch(`${baseUrl}/api/devices/${enrollment.deviceId}`, {
+      method: 'DELETE',
+      headers: parentHeaders,
+    });
+    assert.equal(deleteResponse.status, 204);
+    const afterDelete = await responseJson(await fetch(`${baseUrl}/api/devices`, { headers: parentHeaders }));
+    assert.equal(afterDelete.devices.length, 0);
+    const revokedClient = await fetch(`${baseUrl}/api/client/v1/policy`, { headers: clientHeaders });
+    assert.equal(revokedClient.status, 401);
   } finally {
     child.kill();
     await new Promise((resolve) => child.once('exit', resolve));

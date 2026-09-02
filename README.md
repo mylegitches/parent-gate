@@ -128,6 +128,8 @@ On enrollment, the server assigns an immutable random device ID. A device record
 
 The dashboard home page shows a card for every enrolled client. Each card shows its friendly name, platform, online or last-seen state, master enforcement state, individual controls, and whether the latest policy has been confirmed.
 
+Each card also has **Remove device**. Removal revokes that device credential and deletes its device-scoped policy, targets, and activity from the dashboard. The dashboard refuses removal while internet access is paused so a client cannot be stranded without its restore channel. Removing enrollment does not uninstall the local client; run the platform client uninstaller separately when the physical device is still available.
+
 The device ID is not a secret. Authentication uses a separate high-entropy device credential. A request that merely knows or guesses a device ID cannot read or change policy.
 
 ### Discovered application targets

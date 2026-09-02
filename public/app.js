@@ -103,6 +103,9 @@ function renderDevices() {
     }
     const internetBlocked = Boolean(device.policy.internetBlocked);
     $('.internet-panel', card).hidden = device.platform === 'ios';
+    const removeDevice = $('[data-remove-device]', card);
+    removeDevice.disabled = internetBlocked;
+    removeDevice.title = internetBlocked ? 'Restore internet access before removing this device.' : 'Remove this device from the dashboard.';
     const internetState = $('.internet-state', card);
     internetState.textContent = internetBlocked ? 'Paused' : 'Available';
     internetState.classList.toggle('blocked', internetBlocked);
@@ -307,6 +310,14 @@ $('#devices').addEventListener('click', async (event) => {
   event.target.disabled = true;
   try {
     if (event.target.dataset.masterAction) await applyOverride(card, 'master', 'blocking', event.target.dataset.masterAction);
+    if (event.target.hasAttribute('data-remove-device')) {
+      const name = $('.device-name', card).textContent;
+      const confirmed = window.confirm(`Remove ${name} from the dashboard?\n\nThis revokes its enrollment but does not uninstall the local client. Run the client uninstaller on that device if it is still available.`);
+      if (!confirmed) return;
+      await api(`/api/devices/${encodeURIComponent(card.dataset.deviceId)}`, { method: 'DELETE' });
+      showNotice(`${name} removed from the dashboard.`);
+      await refreshAll();
+    }
     if (event.target.hasAttribute('data-internet-restore')) {
       await api(`/api/devices/${encodeURIComponent(card.dataset.deviceId)}/override`, {
         method: 'PUT',
