@@ -66,7 +66,7 @@ test('setup, enrollment, direct controls, custom websites, and policy form one w
     const clientHeaders = { Authorization: `Bearer ${enrollment.credential}`, 'Content-Type': 'application/json' };
 
     const update = await responseJson(await fetch(`${baseUrl}/api/client/v1/update`, { headers: clientHeaders }));
-    assert.equal(update.version, '0.3.0');
+    assert.equal(update.version, '0.3.1');
     assert.deepEqual(update.files.map((file) => file.name), ['OperationCrackdown.ps1', 'ShowInternetNotice.ps1', 'ApplyUpdate.ps1']);
     const updateCanonical = [update.version, ...update.files.map((file) => `${file.name}|${file.sha256}|${file.url}`)].join('\n');
     const updateKey = createHash('sha256').update(enrollment.credential, 'utf8').digest();
@@ -132,7 +132,7 @@ test('setup, enrollment, direct controls, custom websites, and policy form one w
       headers: clientHeaders,
       body: JSON.stringify({
         appliedRevision: 0,
-        clientVersion: '0.3.0',
+        clientVersion: '0.3.1',
         capabilities: ['target-scan', 'internet-pause-message', 'self-update'],
         status: { state: 'applied' },
       }),
@@ -166,8 +166,8 @@ test('setup, enrollment, direct controls, custom websites, and policy form one w
     assert.equal(policy.customWebsites[0].blocked, true);
     assert.equal(policy.pinVerifiers.length, 1);
     const dashboardDevices = await responseJson(await fetch(`${baseUrl}/api/devices`, { headers: parentHeaders }));
-    assert.equal(dashboardDevices.devices[0].clientVersion, '0.3.0');
-    assert.equal(dashboardDevices.devices[0].latestClientVersion, '0.3.0');
+    assert.equal(dashboardDevices.devices[0].clientVersion, '0.3.1');
+    assert.equal(dashboardDevices.devices[0].latestClientVersion, '0.3.1');
     assert.equal(dashboardDevices.devices[0].updateAvailable, false);
     assert.equal(dashboardDevices.devices[0].applicationActivity.length, 2);
     assert.equal(dashboardDevices.devices[0].applicationActivity[0].eventType, 'stopped');

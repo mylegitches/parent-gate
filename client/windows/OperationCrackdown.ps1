@@ -10,7 +10,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$script:ClientVersion = '0.3.0'
+$script:ClientVersion = '0.3.1'
 $script:ConfigPath = Join-Path $DataDirectory 'config.json'
 $script:PolicyPath = Join-Path $DataDirectory 'policy.json'
 $script:StatusPath = Join-Path $DataDirectory 'status.json'
@@ -441,6 +441,13 @@ function Remove-ControlFirewallRules {
         Remove-NetFirewallRule -ErrorAction SilentlyContinue
 }
 
+function Get-RestoredOutboundAction {
+    param([string]$Value)
+    if ($Value -eq 'Block') { return 'Block' }
+    if ($Value -eq 'Allow') { return 'Allow' }
+    return 'NotConfigured'
+}
+
 function Enable-InternetPause {
     if (-not (Test-IsAdministrator)) { throw 'Internet pause requires an elevated client.' }
     $endpoint = Get-ControlEndpoint
@@ -449,7 +456,7 @@ function Enable-InternetPause {
         $profiles = @(Get-NetFirewallProfile | ForEach-Object {
             @{ name = [string]$_.Name; defaultOutboundAction = [string]$_.DefaultOutboundAction }
         })
-        $state = @{ profiles = $profiles; controlAddresses = @(); controlPort = 0 }
+        $state = @{ profiles = $profiles; controlAddresses = @(); controlPort = 0; disabledAllowRules = @() }
         Save-JsonFile $script:FirewallStatePath $state
     }
     $addressKey = (@($endpoint.Addresses) -join ',')
@@ -466,10 +473,28 @@ function Enable-InternetPause {
         $state.controlPort = [int]$endpoint.Port
         Save-JsonFile $script:FirewallStatePath $state
     }
+    $alreadyDisabled = @($state.disabledAllowRules)
+    $enabledAllowRules = @(Get-NetFirewallRule -PolicyStore PersistentStore -Direction Outbound -Action Allow -Enabled True -ErrorAction Stop |
+        Where-Object { $_.Group -ne $script:FirewallRuleGroup })
+    $newRuleNames = @($enabledAllowRules.Name | Where-Object { $_ -notin $alreadyDisabled } | Sort-Object -Unique)
+    if ($newRuleNames.Count -gt 0) {
+        $state.disabledAllowRules = @($alreadyDisabled + $newRuleNames | Sort-Object -Unique)
+        Save-JsonFile $script:FirewallStatePath $state
+        foreach ($name in $newRuleNames) {
+            Set-NetFirewallRule -PolicyStore PersistentStore -Name $name -Enabled False -ErrorAction Stop
+        }
+    }
     foreach ($profile in Get-NetFirewallProfile) {
         if ([string]$profile.DefaultOutboundAction -ne 'Block') {
             Set-NetFirewallProfile -Name $profile.Name -DefaultOutboundAction Block
         }
+    }
+    try {
+        Invoke-WebRequest -Uri "$($script:Config.serverUrl.TrimEnd('/'))/healthz" -UseBasicParsing -TimeoutSec 8 | Out-Null
+    }
+    catch {
+        Disable-InternetPause
+        throw "Internet pause was rolled back because the dashboard control channel failed: $($_.Exception.Message)"
     }
     $script:InternetPauseKnownDisabled = $false
 }
@@ -477,15 +502,34 @@ function Enable-InternetPause {
 function Disable-InternetPause {
     $state = Read-JsonFile $script:FirewallStatePath $null
     if ($state) {
-        foreach ($profile in @($state.profiles)) {
-            $action = if ([string]$profile.defaultOutboundAction -eq 'Block') { 'Block' } else { 'Allow' }
-            Set-NetFirewallProfile -Name ([string]$profile.name) -DefaultOutboundAction $action
+        $restoreErrors = New-Object Collections.Generic.List[string]
+        foreach ($name in @($state.disabledAllowRules)) {
+            try { Set-NetFirewallRule -PolicyStore PersistentStore -Name ([string]$name) -Enabled True -ErrorAction Stop }
+            catch { $restoreErrors.Add("Firewall rule $name`: $($_.Exception.Message)") }
         }
-        Remove-Item -LiteralPath $script:FirewallStatePath -Force -ErrorAction SilentlyContinue
+        foreach ($profile in @($state.profiles)) {
+            try {
+                $action = Get-RestoredOutboundAction ([string]$profile.defaultOutboundAction)
+                Set-NetFirewallProfile -Name ([string]$profile.name) -DefaultOutboundAction $action -ErrorAction Stop
+            }
+            catch { $restoreErrors.Add("Firewall profile $($profile.name): $($_.Exception.Message)") }
+        }
         Remove-ControlFirewallRules
+        if ($restoreErrors.Count -gt 0) { throw "Internet restore was incomplete: $($restoreErrors -join '; ')" }
+        Remove-Item -LiteralPath $script:FirewallStatePath -Force -ErrorAction SilentlyContinue
     }
     elseif (-not $script:InternetPauseKnownDisabled) { Remove-ControlFirewallRules }
     $script:InternetPauseKnownDisabled = $true
+}
+
+function Ensure-EmergencyRestoreShortcut {
+    $desktop = [Environment]::GetFolderPath('CommonDesktopDirectory')
+    if ([string]::IsNullOrWhiteSpace($desktop)) { return }
+    $shortcutPath = Join-Path $desktop 'Operation Crackdown Emergency Restore.cmd'
+    $command = '@echo off' + "`r`n" + 'powershell.exe -NoProfile -Command "Start-Process powershell.exe -Verb RunAs -ArgumentList ''-NoProfile -NoExit -ExecutionPolicy Bypass -File ""C:\ProgramData\OperationCrackdown\ApplyUpdate.ps1"" -EmergencyRestore''"'
+    if (-not (Test-Path -LiteralPath $shortcutPath) -or (Get-Content -LiteralPath $shortcutPath -Raw) -ne $command) {
+        Set-Content -LiteralPath $shortcutPath -Value $command -Encoding ASCII -NoNewline
+    }
 }
 
 function Update-InternetNotice {
@@ -887,6 +931,7 @@ function Start-Agent {
     $script:Credential = Unprotect-Secret $script:Config.credentialProtected
     $script:LocalPort = if ($script:Config.localPort) { [int]$script:Config.localPort } else { 8765 }
     $script:LatestPolicy = Read-JsonFile $script:PolicyPath $null
+    Ensure-EmergencyRestoreShortcut
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $script:LocalPort)
     $listener.Start()
     $clientTask = $listener.AcceptTcpClientAsync()

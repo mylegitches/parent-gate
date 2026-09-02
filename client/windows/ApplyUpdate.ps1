@@ -1,9 +1,10 @@
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][string]$StagingDirectory,
-    [Parameter(Mandatory = $true)][string]$ExpectedVersion,
-    [Parameter(Mandatory = $true)][int]$ParentProcessId,
-    [string]$InstallDirectory = "$env:ProgramData\OperationCrackdown"
+    [string]$StagingDirectory,
+    [string]$ExpectedVersion,
+    [int]$ParentProcessId,
+    [string]$InstallDirectory = "$env:ProgramData\OperationCrackdown",
+    [switch]$EmergencyRestore
 )
 
 $ErrorActionPreference = 'Stop'
@@ -22,6 +23,53 @@ function Stop-ClientListener {
     foreach ($connection in @(Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue)) {
         Stop-Process -Id $connection.OwningProcess -Force -ErrorAction SilentlyContinue
     }
+}
+
+function Restore-InternetState {
+    $firewallStatePath = Join-Path $InstallDirectory 'internet-firewall-backup.json'
+    $firewallState = if (Test-Path -LiteralPath $firewallStatePath) { Get-Content -LiteralPath $firewallStatePath -Raw | ConvertFrom-Json } else { $null }
+    if ($firewallState) {
+        $restoreErrors = New-Object Collections.Generic.List[string]
+        foreach ($name in @($firewallState.disabledAllowRules)) {
+            try { Set-NetFirewallRule -PolicyStore PersistentStore -Name ([string]$name) -Enabled True -ErrorAction Stop }
+            catch { $restoreErrors.Add("Firewall rule $name`: $($_.Exception.Message)") }
+        }
+        foreach ($profile in @($firewallState.profiles)) {
+            try {
+                $saved = [string]$profile.defaultOutboundAction
+                $action = if ($saved -eq 'Block') { 'Block' } elseif ($saved -eq 'Allow') { 'Allow' } else { 'NotConfigured' }
+                Set-NetFirewallProfile -Name ([string]$profile.name) -DefaultOutboundAction $action -ErrorAction Stop
+            }
+            catch { $restoreErrors.Add("Firewall profile $($profile.name): $($_.Exception.Message)") }
+        }
+        if ($restoreErrors.Count -gt 0) { throw "Emergency firewall restore was incomplete: $($restoreErrors -join '; ')" }
+        Remove-Item -LiteralPath $firewallStatePath -Force
+    }
+    Get-NetFirewallRule -Group 'Operation Crackdown Control Channel' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+    $hostsPath = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
+    if (Test-Path -LiteralPath $hostsPath) {
+        $content = Get-Content -LiteralPath $hostsPath -Raw
+        $clean = [regex]::Replace($content, '(?ms)^# BEGIN OPERATION CRACKDOWN.*?^# END OPERATION CRACKDOWN\s*', '').TrimEnd()
+        Set-Content -LiteralPath $hostsPath -Value $clean -Encoding ASCII
+        Clear-DnsClientCache -ErrorAction SilentlyContinue
+    }
+}
+
+if ($EmergencyRestore) {
+    $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+    if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw 'Emergency restore requires administrator permission.'
+    }
+    schtasks.exe /Change /TN $taskName /Disable | Out-Null
+    Stop-ClientListener
+    Restore-InternetState
+    Write-Host 'Operation Crackdown enforcement is disabled and its firewall and hosts-file changes were restored.'
+    Write-Host 'After restoring access in the dashboard, run Repair.ps1 as Administrator to re-enable the client.'
+    exit 0
+}
+
+if ([string]::IsNullOrWhiteSpace($StagingDirectory) -or [string]::IsNullOrWhiteSpace($ExpectedVersion) -or $ParentProcessId -le 0) {
+    throw 'StagingDirectory, ExpectedVersion, and ParentProcessId are required for a client update.'
 }
 
 try {

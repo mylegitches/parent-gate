@@ -15,8 +15,12 @@ $installDirectory = "$env:ProgramData\OperationCrackdown"
 $firewallStatePath = Join-Path $installDirectory 'internet-firewall-backup.json'
 $firewallState = if (Test-Path -LiteralPath $firewallStatePath) { Get-Content -LiteralPath $firewallStatePath -Raw | ConvertFrom-Json } else { $null }
 if ($firewallState) {
+    foreach ($name in @($firewallState.disabledAllowRules)) {
+        Set-NetFirewallRule -PolicyStore PersistentStore -Name ([string]$name) -Enabled True -ErrorAction Continue
+    }
     foreach ($profile in @($firewallState.profiles)) {
-        $action = if ([string]$profile.defaultOutboundAction -eq 'Block') { 'Block' } else { 'Allow' }
+        $saved = [string]$profile.defaultOutboundAction
+        $action = if ($saved -eq 'Block') { 'Block' } elseif ($saved -eq 'Allow') { 'Allow' } else { 'NotConfigured' }
         Set-NetFirewallProfile -Name ([string]$profile.name) -DefaultOutboundAction $action
     }
 }
@@ -33,6 +37,8 @@ if (Test-Path -LiteralPath $hostsPath) {
 
 $shortcutPath = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'Operation Crackdown Parent Override.url'
 if (Test-Path -LiteralPath $shortcutPath) { Remove-Item -LiteralPath $shortcutPath -Force }
+$recoveryShortcutPath = Join-Path ([Environment]::GetFolderPath('CommonDesktopDirectory')) 'Operation Crackdown Emergency Restore.cmd'
+if (Test-Path -LiteralPath $recoveryShortcutPath) { Remove-Item -LiteralPath $recoveryShortcutPath -Force }
 
 if (Test-Path -LiteralPath $installDirectory) { Remove-Item -LiteralPath $installDirectory -Recurse -Force }
 Write-Host 'Operation Crackdown was removed. Its managed hosts entries were cleared.'

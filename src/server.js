@@ -883,7 +883,7 @@ const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, appBaseUrl);
     if (req.method === 'GET' && url.pathname === '/healthz') {
-      return json(res, 200, { ok: true, version: '0.3.0' });
+      return json(res, 200, { ok: true, version: '0.3.1' });
     }
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
     if (req.method === 'GET' && await serveStatic(res, url.pathname)) return;
