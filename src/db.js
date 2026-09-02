@@ -91,6 +91,36 @@ function migrate(db) {
       FOREIGN KEY (device_id, target_key) REFERENCES device_targets(device_id, target_key) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS custom_websites (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+      display_name TEXT NOT NULL,
+      domain TEXT NOT NULL,
+      default_blocked INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (device_id, domain)
+    );
+
+    CREATE TABLE IF NOT EXISTS application_events (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+      target_key TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      event_type TEXT NOT NULL CHECK (event_type IN ('started', 'stopped')),
+      occurred_at TEXT NOT NULL,
+      received_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS website_events (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+      domain TEXT NOT NULL,
+      browser TEXT NOT NULL,
+      occurred_at TEXT NOT NULL,
+      received_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS overrides (
       id TEXT PRIMARY KEY,
       operation_id TEXT UNIQUE,
@@ -119,6 +149,9 @@ function migrate(db) {
     CREATE INDEX IF NOT EXISTS idx_sessions_expiry ON sessions(expires_at);
     CREATE INDEX IF NOT EXISTS idx_overrides_device ON overrides(device_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_device_targets_seen ON device_targets(device_id, last_seen DESC);
+    CREATE INDEX IF NOT EXISTS idx_custom_websites_device ON custom_websites(device_id, display_name);
+    CREATE INDEX IF NOT EXISTS idx_application_events_device_time ON application_events(device_id, occurred_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_website_events_device_time ON website_events(device_id, occurred_at DESC);
     CREATE INDEX IF NOT EXISTS idx_audit_time ON audit_events(occurred_at DESC);
   `);
 }

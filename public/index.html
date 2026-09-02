@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#101828">
   <title>Operation Crackdown</title>
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v=0.1.1">
 </head>
 <body>
   <main class="shell">
@@ -16,8 +16,8 @@
       <form id="auth-form">
         <label>Username<input name="username" autocomplete="username" required minlength="3"></label>
         <label id="display-name-row" hidden>Display name<input name="displayName" autocomplete="name"></label>
-        <label>Password<input name="password" type="password" autocomplete="current-password" required minlength="10"></label>
-        <label id="pin-row" hidden>Local parent PIN<input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4,8}" autocomplete="new-password"></label>
+        <label id="password-row" hidden>Dashboard password<input name="password" type="password" autocomplete="new-password" minlength="10"></label>
+        <label id="pin-row">PIN<input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4,8}" autocomplete="current-password" required></label>
         <button class="primary wide" type="submit">Continue</button>
         <p id="auth-error" class="error" role="alert"></p>
       </form>
@@ -88,49 +88,67 @@
         <span class="policy-status"></span>
       </header>
 
-      <div class="profile-block">
+      <div class="controls-block">
         <div class="section-heading">
-          <h3>Focus mode</h3>
+          <div><p class="eyebrow">MASTER CONTROL</p><h3>Blocking</h3></div>
           <label class="duration-label">For
             <select class="duration-select">
+              <option value="0" selected>Until changed</option>
               <option value="30">30 minutes</option>
-              <option value="60" selected>1 hour</option>
+              <option value="60">1 hour</option>
               <option value="120">2 hours</option>
-              <option value="0">Until changed</option>
             </select>
           </label>
         </div>
-        <div class="segmented profile-buttons">
-          <button data-profile="normal">Normal</button>
-          <button data-profile="homework">Homework</button>
-          <button data-profile="deep-focus">Deep Focus</button>
+        <div class="segmented master-buttons">
+          <button data-master-action="enable">On</button>
+          <button data-master-action="disable">Off</button>
         </div>
+        <p class="muted master-help">Off temporarily allows everything without forgetting your individual selections.</p>
       </div>
 
-      <section class="category-block">
-        <div class="section-heading">
-          <div><p class="eyebrow">CATEGORY</p><h3>Streaming</h3></div>
-          <div class="button-pair">
-            <button class="small allow" data-category-action="allow">Allow all</button>
-            <button class="small block" data-category-action="block">Block all</button>
-          </div>
-        </div>
+      <section>
+        <h3>Apps and services</h3>
+        <div class="service-list"></div>
       </section>
 
-      <section>
-        <h3>Services</h3>
-        <div class="service-list"></div>
+      <section class="websites-panel">
+        <h3>Additional websites</h3>
+        <p class="muted target-help">Paste a domain or full URL. The entire hostname will be blocked on this device.</p>
+        <form class="website-form">
+          <input name="url" type="text" inputmode="url" placeholder="example.com or https://example.com/page" required>
+          <input name="displayName" type="text" placeholder="Name (optional)" maxlength="100">
+          <button class="primary" type="submit">Add and block</button>
+        </form>
+        <div class="website-list"></div>
       </section>
 
       <details class="targets-panel">
         <summary>Discovered application targets <span class="target-count"></span></summary>
-        <p class="muted target-help">Assign a running application to the profiles where it should be blocked. Only application identity is reported—never window titles or content.</p>
+        <p class="muted target-help">Choose additional running applications to block. Only application identity is reported—never window titles or content.</p>
         <div class="targets-list"></div>
+      </details>
+
+      <details class="activity-panel">
+        <summary>Activity <span class="activity-count"></span></summary>
+        <p class="muted target-help">Application starts/stops and browser hostnames only. Window titles, page paths, searches, content, and command lines are never collected.</p>
+        <div class="segmented activity-filters">
+          <button class="active" data-activity-filter="all">All</button>
+          <button data-activity-filter="applications">Applications</button>
+          <button data-activity-filter="websites">Websites</button>
+        </div>
+        <div class="activity-group" data-activity-group="applications">
+          <h4>Applications</h4>
+          <div class="activity-list application-activity-list"></div>
+        </div>
+        <div class="activity-group" data-activity-group="websites">
+          <h4>Websites</h4>
+          <div class="activity-list website-activity-list"></div>
+        </div>
       </details>
     </article>
   </template>
 
-  <script type="module" src="/app.js"></script>
+  <script type="module" src="/app.js?v=0.1.1"></script>
 </body>
 </html>
-

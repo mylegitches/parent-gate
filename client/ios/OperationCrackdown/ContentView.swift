@@ -30,11 +30,10 @@ struct ContentView: View {
             Section("Local parent override") {
                 SecureField("Parent PIN", text: $store.pin).keyboardType(.numberPad)
                 Picker("Duration", selection: $store.durationMinutes) {
-                    Text("30 minutes").tag(30); Text("1 hour").tag(60); Text("2 hours").tag(120); Text("Until changed").tag(0)
+                    Text("Until changed").tag(0); Text("30 minutes").tag(30); Text("1 hour").tag(60); Text("2 hours").tag(120)
                 }
-                Button("Normal mode") { Task { await store.override(targetType: "profile", targetId: "normal", action: "set") } }
-                Button("Homework mode") { Task { await store.override(targetType: "profile", targetId: "homework", action: "set") } }
-                Button("Deep Focus") { Task { await store.override(targetType: "profile", targetId: "deep-focus", action: "set") } }
+                Button("Turn master blocking on") { Task { await store.override(targetType: "master", targetId: "blocking", action: "enable") } }
+                Button("Turn master blocking off") { Task { await store.override(targetType: "master", targetId: "blocking", action: "disable") } }
             }
 
             if let policy = store.policy {
@@ -53,7 +52,14 @@ struct ContentView: View {
                     get: { store.controls.selectionKey },
                     set: { store.controls.selectionKey = $0 }
                 )) {
-                    Text("Discord").tag("discord"); Text("Netflix").tag("netflix"); Text("Paramount+").tag("paramount")
+                    Text("Discord").tag("discord"); Text("Snapchat").tag("snapchat"); Text("Facebook / Messenger").tag("facebook")
+                    Text("Instagram").tag("instagram"); Text("WhatsApp").tag("whatsapp"); Text("Telegram").tag("telegram")
+                    Text("Signal").tag("signal"); Text("Slack").tag("slack"); Text("Microsoft Teams").tag("teams")
+                    Text("Google Chat").tag("google-chat"); Text("Google Messages").tag("google-messages")
+                    Text("Zoom").tag("zoom"); Text("Reddit").tag("reddit")
+                    Text("TikTok").tag("tiktok"); Text("X / Twitter").tag("x-twitter")
+                    Text("Roblox").tag("roblox")
+                    Text("Netflix").tag("netflix"); Text("Paramount+").tag("paramount")
                     Text("discovery+").tag("discovery"); Text("Hulu").tag("hulu"); Text("YouTube").tag("youtube")
                 }
                 Button("Open Apple activity picker") { showPicker = true }

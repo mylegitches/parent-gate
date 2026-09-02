@@ -5,9 +5,9 @@
 This repository contains a working household focus-control stack:
 
 - A zero-dependency Node.js dashboard/API using Node's built-in SQLite driver.
-- A responsive parent dashboard with local accounts, device enrollment, profiles, streaming controls, discovered targets, and audit history.
+- A responsive parent dashboard with local accounts, device enrollment, a master switch, individual service controls, custom websites, discovered targets, and audit history.
 - A Docker image and Compose deployment for a NAS behind Nginx Proxy Manager.
-- A working Windows client with process enforcement, managed hosts entries, outbound policy polling, running-application discovery, an offline queue, and a loopback-only parent PIN page.
+- A working Windows client with process enforcement, managed hosts entries, outbound policy polling, running-application discovery, privacy-limited start/stop activity, offline queues, and a loopback-only parent PIN page.
 - An Android native client project using a foreground service and local-only `VpnService` package filtering.
 - An iOS native client source project using Family Controls and Managed Settings, subject to Apple's required entitlement and signing process.
 - Automated server, authentication, policy, discovery, and API integration tests.
@@ -33,25 +33,24 @@ The dashboard is published through the existing Nginx Proxy Manager instance. Ev
 
 The main dashboard should favor a few large controls instead of exposing technical firewall rules.
 
-### Focus profiles
+### Controls
 
-- **Normal:** All configured applications and websites are available.
-- **Homework:** Discord and selected social applications and websites are blocked; streaming remains independently configurable.
-- **Deep Focus:** Communication, social, streaming, games, and other configured distractions are blocked by default.
-- **Offline:** Internet access is disabled on the controlled PC. This is optional and should not be part of the first MVP.
+- A per-device master switch pauses or resumes all enforcement without forgetting individual selections.
+- Every built-in app or service has its own Allow/Block control.
+- Parents can paste an additional domain or full URL into a device card. The server stores the hostname and the Windows client adds it to the managed hosts block.
+- Discovered applications can be blocked directly without assigning them to a mode or profile.
+- Changes remain in effect until changed unless a parent explicitly selects a temporary duration.
 
 ### Quick actions
 
-- Start Homework mode for 30 minutes.
-- Start Homework mode for one hour.
-- Block distractions until a selected time.
-- Return to Normal now.
+- Turn all configured blocking off temporarily without losing selections.
+- Turn all configured blocking back on.
 - Enable or disable an individual application.
-- Enable or disable all streaming services together.
 - Enable or disable Netflix, Paramount+, discovery+, Hulu, or YouTube individually.
+- Add and block an additional website by pasting its domain or URL.
 - See whether each device is online, pending synchronization, or last seen at a particular time.
 
-The active profile, its expiration time, and the parent who changed it should be immediately visible. The interface should work well on a phone and desktop browser.
+The master state, individual selections, temporary expiration, and parent who changed a control should be immediately visible. The interface should work well on a phone and desktop browser.
 
 ### Local parent override
 
@@ -61,13 +60,13 @@ The local flow is:
 
 1. Open `Parent Override` from the Windows tray application or the Android/iOS client.
 2. Enter a parent PIN.
-3. See the device's effective profile and resolved service controls.
-4. Select Normal, Homework, Deep Focus, a category control, or an individual service control.
-5. Choose a duration such as 30 minutes, one hour, until a selected time, or until manually changed.
+3. See the device's master state and resolved individual controls.
+4. Change the master switch or an individual service, discovered application, or custom website.
+5. Keep the default `Until changed`, or explicitly choose a temporary duration.
 6. Apply the change immediately on that device.
 7. Synchronize the override to the dashboard, where it becomes visible like an override created remotely.
 
-The local screen is device-scoped. It should not edit another device, a household-wide profile definition, or a recurring schedule. Those broader changes remain dashboard functions.
+The local screen is device-scoped. It does not edit another device or household-wide settings.
 
 Where practical, each parent should have a separate PIN so the audit history can identify who made the change. The user interface may also support a single household parent PIN for simpler initial setup.
 
@@ -93,7 +92,7 @@ The NAS-hosted service provides:
 - A responsive web dashboard.
 - Parent authentication and sessions.
 - Device enrollment and client authentication.
-- Focus profiles and individual application rules.
+- Master enforcement and individual application, service, and website rules.
 - One-time and recurring schedules.
 - Desired policy state for every enrolled device.
 - Client heartbeat, capabilities, and enforcement status for every enrolled device.
@@ -119,19 +118,23 @@ On enrollment, the server assigns an immutable random device ID. A device record
 - Last acknowledged policy revision.
 - Current enforcement result and any degraded capability.
 
-The dashboard home page shows a card for every enrolled client. Each card shows its friendly name, platform icon, online or last-seen state, active profile, temporary override expiration, and whether the latest policy has been confirmed. Selecting a card exposes per-device controls and history. Profiles may be applied to one device or to a parent-defined group of devices belonging to the same child.
+The dashboard home page shows a card for every enrolled client. Each card shows its friendly name, platform, online or last-seen state, master enforcement state, individual controls, and whether the latest policy has been confirmed.
 
 The device ID is not a secret. Authentication uses a separate high-entropy device credential. A request that merely knows or guesses a device ID cannot read or change policy.
 
 ### Discovered application targets
 
-Clients report available application identities so parents can add household-specific distractions to Homework or Deep Focus without editing server files. Reports include only a stable process/package key, display name, platform mapping, source, and category guess. They never include window titles, messages, document names, URLs, or captured content.
+Clients report available application identities so parents can block household-specific distractions without editing server files. Reports include only a stable process/package key, display name, platform mapping, source, and category guess. They never include window titles, messages, document names, URLs, or captured content.
+
+The Windows client also reports start and stop events for user-facing applications. Each event contains only a generated event ID, stable process key, display name, category guess, event type, and UTC timestamp. Events queue locally while the dashboard is unavailable. The server retains at most 30 days and 5,000 events per device, and the dashboard provides a direct Block action from the activity list.
+
+An optional Manifest V3 browser extension reports top-level visited hostnames to the loopback Windows client. It deliberately strips page paths, query strings, searches, titles, fragments, content, and subframe/background traffic. The extension and Windows client both queue events during outages. Website events use the same 30-day and 5,000-event-per-device retention limit. The dashboard Activity area can show all activity or filter between Applications and Websites, with a direct Block action for either type.
 
 - Windows reports applications with visible windows and marks them as currently running.
 - Android reports launcher applications visible under Android's package-visibility rules. Android does not claim they are currently running.
 - iOS cannot enumerate installed applications. The parent selects apps locally through Apple's Family Activity picker, and the client reports only a logical local-selection alias to the dashboard.
 
-The dashboard lists these targets per device with Homework and Deep Focus checkboxes. Assignments become part of the resolved policy and are versioned like built-in service controls.
+The dashboard lists these targets per device with direct Allow and Block controls. Selections become part of the resolved policy and are versioned like built-in service controls.
 
 ### Default service catalog
 
@@ -139,10 +142,11 @@ The server ships with a versioned catalog of logical services. A logical service
 
 The initial catalog must include:
 
-- **Communication and social:** Discord.
+- **Communication and social:** Discord, Snapchat, Facebook/Messenger, Instagram, WhatsApp, Telegram, Signal, Slack, Teams, Google Chat, Google Messages, Zoom, Reddit, TikTok, and X/Twitter.
+- **Gaming:** Roblox.
 - **Streaming:** Netflix, Paramount+, discovery+, Hulu, and YouTube.
 
-The dashboard exposes both category-level and individual controls. Blocking `Streaming` blocks every enabled service in that category; an individual temporary exception can allow one service without enabling the rest. The active policy should show the resolved result so parents can see, for example, `Streaming blocked; YouTube allowed until 6:00 PM`.
+The dashboard exposes individual controls and a master pause/resume switch. A temporary change is optional; permanent `Until changed` behavior is the default.
 
 Each service definition can contain:
 

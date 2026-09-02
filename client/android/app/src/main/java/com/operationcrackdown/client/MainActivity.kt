@@ -58,7 +58,7 @@ class MainActivity : Activity() {
         val pin = field("Parent PIN", InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD)
         val target = Spinner(this)
         val action = Spinner(this).apply { adapter = adapterOf(listOf("Allow", "Block")) }
-        val duration = Spinner(this).apply { adapter = adapterOf(listOf("30 minutes", "1 hour", "2 hours", "Until changed")) }
+        val duration = Spinner(this).apply { adapter = adapterOf(listOf("Until changed", "30 minutes", "1 hour", "2 hours")) }
         content.addView(target, matchWidth())
         content.addView(action, matchWidth())
         content.addView(duration, matchWidth())
@@ -68,8 +68,8 @@ class MainActivity : Activity() {
             val parentKey = PolicyTools.parentForPin(policy, pin.text.toString())
             if (parentKey == null) { status("Incorrect parent PIN."); return@button }
             val selection = target.selectedItem as TargetChoice
-            val selectedAction = if (selection.type == "profile") "set" else if (action.selectedItemPosition == 0) "allow" else "block"
-            val minutes = intArrayOf(30, 60, 120, 0)[duration.selectedItemPosition]
+            val selectedAction = selection.fixedAction ?: if (action.selectedItemPosition == 0) "allow" else "block"
+            val minutes = intArrayOf(0, 30, 60, 120)[duration.selectedItemPosition]
             val operation = PolicyTools.localOperation(policy, parentKey, selection.type, selection.id, selectedAction, minutes)
             api.saveLocalOperation(operation)
             startFocusService()
@@ -86,9 +86,8 @@ class MainActivity : Activity() {
             try {
                 val policy = api.getPolicy()
                 val choices = mutableListOf(
-                    TargetChoice("profile", "normal", "Normal mode"),
-                    TargetChoice("profile", "homework", "Homework mode"),
-                    TargetChoice("profile", "deep-focus", "Deep Focus"),
+                    TargetChoice("master", "blocking", "Turn master blocking on", "enable"),
+                    TargetChoice("master", "blocking", "Turn master blocking off", "disable"),
                 )
                 val services = policy.optJSONArray("services")
                 if (services != null) for (index in 0 until services.length()) {
@@ -97,7 +96,7 @@ class MainActivity : Activity() {
                 }
                 runOnUiThread {
                     target.adapter = adapterOf(choices)
-                    status("Current profile: ${policy.optString("profile")}")
+                    status("Master blocking: ${if (policy.optBoolean("masterEnabled", true)) "On" else "Off"}")
                 }
             } catch (error: Exception) { runOnUiThread { status(error.message ?: "Unable to refresh") } }
         }.start()
@@ -136,6 +135,5 @@ class MainActivity : Activity() {
     private fun matchWidth() = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
     private fun <T> adapterOf(values: List<T>) = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, values)
 
-    data class TargetChoice(val type: String, val id: String, val label: String) { override fun toString() = label }
+    data class TargetChoice(val type: String, val id: String, val label: String, val fixedAction: String? = null) { override fun toString() = label }
 }
-

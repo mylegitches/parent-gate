@@ -5,6 +5,7 @@ struct ClientPolicy: Codable {
     var deviceId: String
     var profile: String
     var effectiveUntil: String?
+    var masterEnabled: Bool
     var services: [ServicePolicy]
     var customTargets: [CustomTarget]
     var pinVerifiers: [PinVerifier]
@@ -14,6 +15,7 @@ struct ServicePolicy: Codable, Identifiable {
     var id: String
     var displayName: String
     var category: String
+    var configuredBlocked: Bool
     var blocked: Bool
     var warning: String?
     var ios: IOSMapping?
@@ -43,4 +45,3 @@ struct LocalOperation: Codable {
 }
 
 struct LocalOperationResponse: Codable { var accepted: Bool; var policy: ClientPolicy }
-

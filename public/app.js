@@ -48,12 +48,16 @@ function showAuth(setup) {
   $('#dashboard').hidden = true;
   $('#auth-view').hidden = false;
   $('#display-name-row').hidden = !setup;
-  $('#pin-row').hidden = !setup;
+  $('#password-row').hidden = !setup;
   $('#auth-copy').textContent = setup
     ? 'Create the first parent account and a PIN for local device overrides.'
     : 'Sign in to manage household focus controls.';
   const password = $('#auth-form [name=password]');
-  password.autocomplete = setup ? 'new-password' : 'current-password';
+  password.disabled = !setup;
+  password.required = setup;
+  const pin = $('#auth-form [name=pin]');
+  pin.autocomplete = setup ? 'new-password' : 'current-password';
+  $('#pin-row').firstChild.textContent = setup ? 'Local parent PIN' : 'PIN';
   $('#auth-form button[type=submit]').textContent = setup ? 'Create dashboard' : 'Sign in';
 }
 
@@ -94,7 +98,9 @@ function renderDevices() {
     const policyStatus = $('.policy-status', card);
     policyStatus.textContent = pending ? `Pending r${device.desiredRevision}` : `Confirmed r${device.appliedRevision}`;
     policyStatus.classList.toggle('pending', pending);
-    for (const button of $$('[data-profile]', card)) button.classList.toggle('active', button.dataset.profile === device.policy.profile);
+    for (const button of $$('[data-master-action]', card)) {
+      button.classList.toggle('active', (button.dataset.masterAction === 'enable') === device.policy.masterEnabled);
+    }
 
     const serviceList = $('.service-list', card);
     for (const service of device.policy.services) {
@@ -109,13 +115,43 @@ function renderDevices() {
       row.dataset.serviceId = service.id;
       $('.service-name', row).textContent = service.displayName;
       const serviceState = $('.service-state', row);
-      serviceState.textContent = service.blocked ? 'Blocked' : 'Allowed';
-      serviceState.classList.toggle('blocked', service.blocked);
+      serviceState.textContent = service.configuredBlocked
+        ? (device.policy.masterEnabled ? 'Blocked' : 'Selected · paused')
+        : 'Allowed';
+      serviceState.classList.toggle('blocked', service.configuredBlocked);
       if (service.warning) row.title = service.warning;
       serviceList.append(row);
     }
 
+    const websiteList = $('.website-list', card);
+    const websites = device.policy.customWebsites ?? [];
+    if (websites.length === 0) {
+      websiteList.innerHTML = '<p class="muted empty-list">No additional websites yet.</p>';
+    } else {
+      for (const website of websites) {
+        const row = document.createElement('div');
+        row.className = 'service-row website-row';
+        row.dataset.websiteId = website.id;
+        row.innerHTML = `
+          <div><span class="service-name"></span><span class="service-state"></span><small class="website-domain"></small></div>
+          <div class="service-actions">
+            <button class="small allow" data-website-action="allow">Allow</button>
+            <button class="small block" data-website-action="block">Block</button>
+            <button class="small quiet" data-delete-website>Remove</button>
+          </div>`;
+        $('.service-name', row).textContent = website.displayName;
+        $('.website-domain', row).textContent = website.domain;
+        const websiteState = $('.service-state', row);
+        websiteState.textContent = website.configuredBlocked
+          ? (device.policy.masterEnabled ? 'Blocked' : 'Selected · paused')
+          : 'Allowed';
+        websiteState.classList.toggle('blocked', website.configuredBlocked);
+        websiteList.append(row);
+      }
+    }
+
     const targets = device.availableTargets ?? [];
+    const targetsByKey = new Map(targets.map((target) => [target.key, target]));
     $('.target-count', card).textContent = `(${targets.length})`;
     const targetList = $('.targets-list', card);
     if (targets.length === 0) {
@@ -128,16 +164,87 @@ function renderDevices() {
         const running = target.currentlyRunning ? '<span class="running-badge">Running</span>' : '';
         row.innerHTML = `
           <div class="target-heading"><div><strong></strong><span class="target-category"></span></div>${running}</div>
-          <div class="profile-checks">
-            <label><input type="checkbox" data-target-profile="homework"> Homework</label>
-            <label><input type="checkbox" data-target-profile="deep-focus"> Deep Focus</label>
+          <div class="target-actions">
+            <span class="service-state"></span>
+            <div class="service-actions">
+              <button class="small allow" data-target-action="allow">Allow</button>
+              <button class="small block" data-target-action="block">Block</button>
+            </div>
           </div>`;
         $('strong', row).textContent = target.displayName;
         $('.target-category', row).textContent = target.categoryGuess && target.categoryGuess !== 'unknown'
           ? `Suggested: ${target.categoryGuess}`
           : 'Uncategorized';
-        for (const checkbox of $$('[data-target-profile]', row)) checkbox.checked = target.profiles.includes(checkbox.dataset.targetProfile);
+        const targetState = $('.service-state', row);
+        targetState.textContent = target.configuredBlocked
+          ? (device.policy.masterEnabled ? 'Blocked' : 'Selected · paused')
+          : 'Allowed';
+        targetState.classList.toggle('blocked', target.configuredBlocked);
         targetList.append(row);
+      }
+    }
+
+    const activity = device.applicationActivity ?? [];
+    const websiteActivity = device.websiteActivity ?? [];
+    $('.activity-count', card).textContent = `(${activity.length + websiteActivity.length})`;
+    const activityList = $('.application-activity-list', card);
+    if (activity.length === 0) {
+      activityList.innerHTML = '<p class="muted">No application activity has been reported yet.</p>';
+    } else {
+      for (const item of activity) {
+        const row = document.createElement('div');
+        row.className = 'activity-row';
+        row.dataset.targetKey = item.targetKey;
+        const target = targetsByKey.get(item.targetKey);
+        row.innerHTML = `
+          <div class="activity-copy">
+            <strong></strong>
+            <span class="activity-event"></span>
+            <time></time>
+          </div>
+          <button class="small block" data-activity-block>Block</button>`;
+        $('strong', row).textContent = item.displayName;
+        const eventLabel = $('.activity-event', row);
+        eventLabel.textContent = item.eventType === 'started' ? 'Started' : 'Stopped';
+        eventLabel.classList.toggle('stopped', item.eventType === 'stopped');
+        $('time', row).textContent = new Date(item.occurredAt).toLocaleString();
+        const blockButton = $('[data-activity-block]', row);
+        if (target?.configuredBlocked) {
+          blockButton.textContent = 'Blocked';
+          blockButton.disabled = true;
+        }
+        activityList.append(row);
+      }
+    }
+
+    const websiteActivityList = $('.website-activity-list', card);
+    const blockedWebsiteDomains = new Set((device.policy.customWebsites ?? [])
+      .filter((website) => website.configuredBlocked)
+      .map((website) => website.domain));
+    if (websiteActivity.length === 0) {
+      websiteActivityList.innerHTML = '<p class="muted">No website activity has been reported yet. Install the browser extension on this PC to begin.</p>';
+    } else {
+      for (const item of websiteActivity) {
+        const row = document.createElement('div');
+        row.className = 'activity-row website-activity-row';
+        row.dataset.domain = item.domain;
+        row.innerHTML = `
+          <div class="activity-copy">
+            <strong></strong>
+            <span class="activity-event">Visited</span>
+            <time></time>
+            <small class="activity-browser"></small>
+          </div>
+          <button class="small block" data-website-activity-block>Block</button>`;
+        $('strong', row).textContent = item.domain;
+        $('time', row).textContent = new Date(item.occurredAt).toLocaleString();
+        $('.activity-browser', row).textContent = item.browser;
+        const blockButton = $('[data-website-activity-block]', row);
+        if (blockedWebsiteDomains.has(item.domain)) {
+          blockButton.textContent = 'Blocked';
+          blockButton.disabled = true;
+        }
+        websiteActivityList.append(row);
       }
     }
     container.append(card);
@@ -191,11 +298,44 @@ $('#devices').addEventListener('click', async (event) => {
   if (!card || !event.target.matches('button')) return;
   event.target.disabled = true;
   try {
-    if (event.target.dataset.profile) await applyOverride(card, 'profile', event.target.dataset.profile, 'set');
-    if (event.target.dataset.categoryAction) await applyOverride(card, 'category', 'streaming', event.target.dataset.categoryAction);
+    if (event.target.dataset.masterAction) await applyOverride(card, 'master', 'blocking', event.target.dataset.masterAction);
     if (event.target.dataset.serviceAction) {
       const service = event.target.closest('[data-service-id]').dataset.serviceId;
       await applyOverride(card, 'service', service, event.target.dataset.serviceAction);
+    }
+    if (event.target.dataset.websiteAction) {
+      const website = event.target.closest('[data-website-id]').dataset.websiteId;
+      await applyOverride(card, 'website', website, event.target.dataset.websiteAction);
+    }
+    if (event.target.dataset.targetAction) {
+      const target = event.target.closest('[data-target-key]').dataset.targetKey;
+      await applyOverride(card, 'target', target, event.target.dataset.targetAction);
+    }
+    if (event.target.hasAttribute('data-activity-block')) {
+      const target = event.target.closest('[data-target-key]').dataset.targetKey;
+      await applyOverride(card, 'target', target, 'block');
+    }
+    if (event.target.hasAttribute('data-website-activity-block')) {
+      const domain = event.target.closest('[data-domain]').dataset.domain;
+      await api(`/api/devices/${encodeURIComponent(card.dataset.deviceId)}/websites`, {
+        method: 'POST',
+        body: { url: domain, displayName: domain },
+      });
+      showNotice(`${domain} added to the block list.`);
+      await refreshAll();
+    }
+    if (event.target.dataset.activityFilter) {
+      const selected = event.target.dataset.activityFilter;
+      for (const button of $$('[data-activity-filter]', card)) button.classList.toggle('active', button === event.target);
+      for (const group of $$('[data-activity-group]', card)) {
+        group.hidden = selected !== 'all' && group.dataset.activityGroup !== selected;
+      }
+    }
+    if (event.target.hasAttribute('data-delete-website')) {
+      const website = event.target.closest('[data-website-id]').dataset.websiteId;
+      await api(`/api/devices/${encodeURIComponent(card.dataset.deviceId)}/websites/${encodeURIComponent(website)}`, { method: 'DELETE' });
+      showNotice('Website removed.');
+      await refreshAll();
     }
   } catch (error) {
     showNotice(error.message, true);
@@ -204,23 +344,23 @@ $('#devices').addEventListener('click', async (event) => {
   }
 });
 
-$('#devices').addEventListener('change', async (event) => {
-  if (!event.target.matches('[data-target-profile]')) return;
+$('#devices').addEventListener('submit', async (event) => {
+  if (!event.target.matches('.website-form')) return;
+  event.preventDefault();
   const card = event.target.closest('.device-card');
-  const row = event.target.closest('[data-target-key]');
-  const profiles = $$('[data-target-profile]:checked', row).map((box) => box.dataset.targetProfile);
-  event.target.disabled = true;
+  const submit = $('button[type=submit]', event.target);
+  submit.disabled = true;
   try {
-    await api(`/api/devices/${encodeURIComponent(card.dataset.deviceId)}/targets`, {
-      method: 'PUT',
-      body: { targetKey: row.dataset.targetKey, profiles },
+    await api(`/api/devices/${encodeURIComponent(card.dataset.deviceId)}/websites`, {
+      method: 'POST',
+      body: Object.fromEntries(new FormData(event.target)),
     });
-    showNotice(`${$('strong', row).textContent} profile assignment updated.`);
+    showNotice('Website added and selected for blocking.');
+    await refreshAll();
   } catch (error) {
     showNotice(error.message, true);
-    await refreshAll();
   } finally {
-    event.target.disabled = false;
+    submit.disabled = false;
   }
 });
 

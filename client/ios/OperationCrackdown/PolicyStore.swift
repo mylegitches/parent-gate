@@ -10,7 +10,7 @@ final class PolicyStore: ObservableObject {
     @Published var deviceName = UIDevice.current.name
     @Published var enrollmentCode = ""
     @Published var pin = ""
-    @Published var durationMinutes = 60
+    @Published var durationMinutes = 0
 
     let controls = FamilyControlsManager()
     private var credential: String? { KeychainStore.read(account: "deviceCredential") }

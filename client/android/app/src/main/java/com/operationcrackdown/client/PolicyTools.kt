@@ -27,33 +27,23 @@ object PolicyTools {
         val targetId = operation.getString("targetId")
         val action = operation.getString("action")
         val services = local.optJSONArray("services")
-        if (targetType == "profile") {
-            local.put("profile", targetId)
-            if (services != null) for (index in 0 until services.length()) {
-                val service = services.getJSONObject(index)
-                val blocked = when (targetId) {
-                    "normal" -> false
-                    "homework" -> service.optString("id") == "discord"
-                    "deep-focus" -> service.optString("category") in setOf("social", "streaming")
-                    else -> service.optBoolean("blocked")
+        if (targetType == "master") {
+            val enabled = action == "enable"
+            local.put("masterEnabled", enabled)
+            listOf("services", "customTargets", "customWebsites").forEach { key ->
+                val items = local.optJSONArray(key)
+                if (items != null) for (index in 0 until items.length()) {
+                    val item = items.getJSONObject(index)
+                    item.put("blocked", enabled && item.optBoolean("configuredBlocked"))
                 }
-                service.put("blocked", blocked)
-            }
-            val custom = local.optJSONArray("customTargets")
-            if (custom != null) for (index in 0 until custom.length()) {
-                val target = custom.getJSONObject(index)
-                val profiles = target.optJSONArray("profiles")
-                var blocked = false
-                if (profiles != null) for (profileIndex in 0 until profiles.length()) {
-                    if (profiles.getString(profileIndex) == targetId) blocked = true
-                }
-                target.put("blocked", blocked)
             }
         } else if (services != null) {
             for (index in 0 until services.length()) {
                 val service = services.getJSONObject(index)
-                if (targetType == "category" && service.optString("category") == targetId) service.put("blocked", action == "block")
-                if (targetType == "service" && service.optString("id") == targetId) service.put("blocked", action == "block")
+                if (targetType == "service" && service.optString("id") == targetId) {
+                    service.put("configuredBlocked", action == "block")
+                    service.put("blocked", local.optBoolean("masterEnabled", true) && action == "block")
+                }
             }
         }
         if (operation.has("effectiveUntil")) {

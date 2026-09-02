@@ -1,4 +1,4 @@
-import { PROFILE_DEFINITIONS, SERVICE_CATALOG } from './catalog.js';
+import { SERVICE_CATALOG } from './catalog.js';
 
 function latestByTarget(overrides, targetType) {
   const result = new Map();
@@ -15,28 +15,14 @@ export function resolvePolicy(db, device, now = new Date(), expiryDepth = 0) {
     WHERE device_id = ? AND status = 'accepted'
       AND (effective_until IS NULL OR effective_until > ?)
     ORDER BY created_at ASC, rowid ASC
-  `).all(device.id, nowIso);
+  `).all(device.id, nowIso).filter((item) => ['master', 'service', 'target', 'website'].includes(item.target_type));
 
-  const profileOverride = overrides.filter((item) => item.target_type === 'profile').at(-1);
-  const profileId = profileOverride?.target_id ?? 'normal';
-  const profile = PROFILE_DEFINITIONS[profileId] ?? PROFILE_DEFINITIONS.normal;
-  const blocked = new Map(SERVICE_CATALOG.map((service) => [service.id, false]));
-
-  for (const serviceId of profile.blockedServices ?? []) blocked.set(serviceId, true);
-  for (const category of profile.blockedCategories ?? []) {
-    for (const service of SERVICE_CATALOG) {
-      if (service.category === category) blocked.set(service.id, true);
-    }
-  }
-
-  for (const [category, override] of latestByTarget(overrides, 'category')) {
-    for (const service of SERVICE_CATALOG) {
-      if (service.category === category) blocked.set(service.id, override.action === 'block');
-    }
-  }
+  const masterOverride = overrides.filter((item) => item.target_type === 'master').at(-1);
+  const masterEnabled = masterOverride ? masterOverride.action === 'enable' : true;
+  const configuredServices = new Map(SERVICE_CATALOG.map((service) => [service.id, false]));
 
   for (const [serviceId, override] of latestByTarget(overrides, 'service')) {
-    if (blocked.has(serviceId)) blocked.set(serviceId, override.action === 'block');
+    if (configuredServices.has(serviceId)) configuredServices.set(serviceId, override.action === 'block');
   }
 
   const nextExpiry = overrides
@@ -44,39 +30,53 @@ export function resolvePolicy(db, device, now = new Date(), expiryDepth = 0) {
     .filter(Boolean)
     .sort()[0] ?? null;
 
+  const targetOverrides = latestByTarget(overrides, 'target');
   const customTargets = db.prepare(`
-    SELECT t.*, GROUP_CONCAT(p.profile_id) AS profile_ids
-    FROM device_targets t
-    JOIN device_target_profiles p
-      ON p.device_id = t.device_id AND p.target_key = t.target_key
-    WHERE t.device_id = ?
-    GROUP BY t.device_id, t.target_key
-    ORDER BY t.display_name COLLATE NOCASE
+    SELECT * FROM device_targets WHERE device_id = ? ORDER BY display_name COLLATE NOCASE
   `).all(device.id).map((target) => {
-    const profiles = String(target.profile_ids ?? '').split(',').filter(Boolean);
+    const configuredBlocked = targetOverrides.get(target.target_key)?.action === 'block';
     return {
       key: target.target_key,
       displayName: target.display_name,
       kind: target.target_kind,
       categoryGuess: target.category_guess,
       mapping: JSON.parse(target.mapping_json),
-      profiles,
-      blocked: profiles.includes(profileId),
+      configuredBlocked,
+      blocked: masterEnabled && configuredBlocked,
+    };
+  });
+
+  const websiteOverrides = latestByTarget(overrides, 'website');
+  const customWebsites = db.prepare(`
+    SELECT * FROM custom_websites WHERE device_id = ? ORDER BY display_name COLLATE NOCASE
+  `).all(device.id).map((website) => {
+    const configuredBlocked = websiteOverrides.has(website.id)
+      ? websiteOverrides.get(website.id).action === 'block'
+      : Boolean(website.default_blocked);
+    return {
+      id: website.id,
+      displayName: website.display_name,
+      domain: website.domain,
+      configuredBlocked,
+      blocked: masterEnabled && configuredBlocked,
     };
   });
 
   const policy = {
     revision: device.desired_revision,
     generatedAt: nowIso,
-    profile: profileId,
-    profileDisplayName: profile.displayName,
-    effectiveUntil: profileOverride?.effective_until ?? null,
+    profile: 'custom',
+    profileDisplayName: 'Custom controls',
+    effectiveUntil: null,
+    masterEnabled,
     nextExpiry,
     services: SERVICE_CATALOG.map((service) => ({
       ...service,
-      blocked: blocked.get(service.id),
+      configuredBlocked: configuredServices.get(service.id),
+      blocked: masterEnabled && configuredServices.get(service.id),
     })),
     customTargets,
+    customWebsites,
     internetBlocked: false,
   };
   if (nextExpiry && expiryDepth < 20) {
@@ -86,14 +86,14 @@ export function resolvePolicy(db, device, now = new Date(), expiryDepth = 0) {
 }
 
 export function validateOverride(targetType, targetId, action) {
-  if (targetType === 'profile') {
-    return action === 'set' && Object.hasOwn(PROFILE_DEFINITIONS, targetId);
-  }
-  if (targetType === 'category') {
-    return ['social', 'streaming'].includes(targetId) && ['allow', 'block'].includes(action);
+  if (targetType === 'master') {
+    return targetId === 'blocking' && ['enable', 'disable'].includes(action);
   }
   if (targetType === 'service') {
     return SERVICE_CATALOG.some((service) => service.id === targetId) && ['allow', 'block'].includes(action);
+  }
+  if (['target', 'website'].includes(targetType)) {
+    return targetId.length >= 1 && targetId.length <= 180 && ['allow', 'block'].includes(action);
   }
   return false;
 }

@@ -116,6 +116,7 @@ class FocusVpnService : VpnService() {
             val category = when {
                 listOf("discord", "slack", "teams", "zoom", "signal", "telegram", "whatsapp", "messenger").any(combined::contains) -> "communication"
                 listOf("netflix", "hulu", "paramount", "discovery", "youtube", "twitch", "spotify", "disney").any(combined::contains) -> "streaming"
+                listOf("roblox", "minecraft", "fortnite", "steam", "epic games", "valorant").any(combined::contains) -> "gaming"
                 else -> "unknown"
             }
             result.put(

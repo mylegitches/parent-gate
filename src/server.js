@@ -7,8 +7,8 @@ import { randomUUID } from 'node:crypto';
 import { openDatabase, audit } from './db.js';
 import {
   hashPassword,
-  verifyPassword,
   hashPin,
+  verifyPin,
   randomToken,
   randomEnrollmentCode,
   sha256,
@@ -137,13 +137,11 @@ function requireClient(req, res) {
 
 function deviceView(device) {
   const status = safeJson(device.status_json, {});
+  const policy = resolvePolicy(db, device);
+  const targetPolicy = new Map(policy.customTargets.map((target) => [target.key, target]));
   const availableTargets = db.prepare(`
-    SELECT t.*, GROUP_CONCAT(p.profile_id) AS profile_ids
-    FROM device_targets t
-    LEFT JOIN device_target_profiles p
-      ON p.device_id = t.device_id AND p.target_key = t.target_key
+    SELECT t.* FROM device_targets t
     WHERE t.device_id = ?
-    GROUP BY t.device_id, t.target_key
     ORDER BY t.currently_running DESC, t.display_name COLLATE NOCASE
   `).all(device.id).map((target) => ({
     key: target.target_key,
@@ -153,7 +151,33 @@ function deviceView(device) {
     source: target.source,
     currentlyRunning: Boolean(target.currently_running),
     lastSeen: target.last_seen,
-    profiles: String(target.profile_ids ?? '').split(',').filter(Boolean),
+    configuredBlocked: Boolean(targetPolicy.get(target.target_key)?.configuredBlocked),
+    blocked: Boolean(targetPolicy.get(target.target_key)?.blocked),
+  }));
+  const applicationActivity = db.prepare(`
+    SELECT id, target_key, display_name, event_type, occurred_at
+    FROM application_events
+    WHERE device_id = ?
+    ORDER BY occurred_at DESC, rowid DESC
+    LIMIT 250
+  `).all(device.id).map((event) => ({
+    id: event.id,
+    targetKey: event.target_key,
+    displayName: event.display_name,
+    eventType: event.event_type,
+    occurredAt: event.occurred_at,
+  }));
+  const websiteActivity = db.prepare(`
+    SELECT id, domain, browser, occurred_at
+    FROM website_events
+    WHERE device_id = ?
+    ORDER BY occurred_at DESC, rowid DESC
+    LIMIT 250
+  `).all(device.id).map((event) => ({
+    id: event.id,
+    domain: event.domain,
+    browser: event.browser,
+    occurredAt: event.occurred_at,
   }));
   return {
     id: device.id,
@@ -167,8 +191,10 @@ function deviceView(device) {
     lastSeen: device.last_seen,
     status,
     online: device.last_seen ? Date.now() - new Date(device.last_seen).valueOf() < 45000 : false,
-    policy: resolvePolicy(db, device),
+    policy,
     availableTargets,
+    applicationActivity,
+    websiteActivity,
   };
 }
 
@@ -177,6 +203,19 @@ function safeJson(value, fallback) {
     return JSON.parse(value);
   } catch {
     return fallback;
+  }
+}
+
+function normalizeWebsite(value) {
+  const input = String(value ?? '').trim();
+  if (!input || input.length > 2048) return null;
+  try {
+    const parsed = new URL(input.includes('://') ? input : `https://${input}`);
+    const domain = parsed.hostname.toLowerCase().replace(/^\.+|\.+$/g, '');
+    if (!domain || domain.length > 253 || !domain.includes('.') || !/^[a-z0-9.-]+$/i.test(domain)) return null;
+    return domain;
+  } catch {
+    return null;
   }
 }
 
@@ -287,9 +326,9 @@ async function handleApi(req, res, url) {
     const attemptKey = `${remote}:${username.toLowerCase()}`;
     if (rateLimited(attemptKey)) return json(res, 429, { error: 'Too many login attempts. Try again later.' });
     const parent = db.prepare('SELECT * FROM parents WHERE username = ? COLLATE NOCASE').get(username);
-    if (!parent || !verifyPassword(String(body.password ?? ''), parent.password_hash)) {
+    if (!parent || !verifyPin(String(body.pin ?? ''), parent.pin_hash)) {
       recordFailedLogin(attemptKey);
-      return json(res, 401, { error: 'Invalid username or password.' });
+      return json(res, 401, { error: 'Invalid username or PIN.' });
     }
     loginAttempts.delete(attemptKey);
     const session = createSession(parent.id);
@@ -414,6 +453,105 @@ async function handleApi(req, res, url) {
       return json(res, 200, { accepted: targets.length });
     }
 
+    if (req.method === 'POST' && path === '/api/client/v1/application-events') {
+      const body = await bodyJson(req);
+      const events = Array.isArray(body.events) ? body.events.slice(0, 500) : [];
+      const receivedAt = new Date().toISOString();
+      const insertEvent = db.prepare(`
+        INSERT OR IGNORE INTO application_events
+          (id, device_id, target_key, display_name, event_type, occurred_at, received_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      const upsertTarget = db.prepare(`
+        INSERT INTO device_targets
+          (device_id, target_key, display_name, target_kind, category_guess, mapping_json, source, currently_running, first_seen, last_seen)
+        VALUES (?, ?, ?, 'application', ?, ?, 'windows-activity-monitor', ?, ?, ?)
+        ON CONFLICT(device_id, target_key) DO UPDATE SET
+          display_name = excluded.display_name,
+          mapping_json = excluded.mapping_json,
+          source = excluded.source,
+          currently_running = excluded.currently_running,
+          last_seen = excluded.last_seen
+      `);
+      let accepted = 0;
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        for (const event of events) {
+          const id = String(event.id ?? '');
+          const targetKey = String(event.targetKey ?? '').toLowerCase();
+          const displayName = String(event.displayName ?? '').trim().slice(0, 120);
+          const eventType = String(event.eventType ?? '');
+          const occurred = new Date(String(event.occurredAt ?? ''));
+          if (!/^[0-9a-f-]{36}$/i.test(id) || !/^process:[a-z0-9._-]+\.exe$/i.test(targetKey)) continue;
+          if (!displayName || !['started', 'stopped'].includes(eventType) || Number.isNaN(occurred.valueOf())) continue;
+          const occurredAt = occurred.toISOString();
+          const processName = targetKey.slice('process:'.length);
+          const result = insertEvent.run(id, device.id, targetKey, displayName, eventType, occurredAt, receivedAt);
+          if (result.changes) accepted += 1;
+          upsertTarget.run(
+            device.id,
+            targetKey,
+            displayName,
+            String(event.categoryGuess ?? 'unknown').slice(0, 40),
+            JSON.stringify({ processes: [processName] }),
+            eventType === 'started' ? 1 : 0,
+            occurredAt,
+            occurredAt,
+          );
+        }
+        const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+        db.prepare('DELETE FROM application_events WHERE device_id = ? AND occurred_at < ?').run(device.id, cutoff);
+        db.prepare(`
+          DELETE FROM application_events WHERE id IN (
+            SELECT id FROM application_events WHERE device_id = ?
+            ORDER BY occurred_at DESC, rowid DESC LIMIT -1 OFFSET 5000
+          )
+        `).run(device.id);
+        db.exec('COMMIT');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+      return json(res, 200, { accepted });
+    }
+
+    if (req.method === 'POST' && path === '/api/client/v1/website-events') {
+      const body = await bodyJson(req);
+      const events = Array.isArray(body.events) ? body.events.slice(0, 500) : [];
+      const receivedAt = new Date().toISOString();
+      const insert = db.prepare(`
+        INSERT OR IGNORE INTO website_events
+          (id, device_id, domain, browser, occurred_at, received_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      let accepted = 0;
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        for (const event of events) {
+          const id = String(event.id ?? '');
+          const domain = normalizeWebsite(event.domain);
+          const browser = String(event.browser ?? 'browser').trim().slice(0, 40) || 'browser';
+          const occurred = new Date(String(event.occurredAt ?? ''));
+          if (!/^[0-9a-f-]{36}$/i.test(id) || !domain || Number.isNaN(occurred.valueOf())) continue;
+          const result = insert.run(id, device.id, domain, browser, occurred.toISOString(), receivedAt);
+          if (result.changes) accepted += 1;
+        }
+        const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
+        db.prepare('DELETE FROM website_events WHERE device_id = ? AND occurred_at < ?').run(device.id, cutoff);
+        db.prepare(`
+          DELETE FROM website_events WHERE id IN (
+            SELECT id FROM website_events WHERE device_id = ?
+            ORDER BY occurred_at DESC, rowid DESC LIMIT -1 OFFSET 5000
+          )
+        `).run(device.id);
+        db.exec('COMMIT');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+      return json(res, 200, { accepted });
+    }
+
     if (req.method === 'GET' && path === '/api/client/v1/local-pin-verifiers') {
       const verifiers = db.prepare('SELECT id AS parentKeyId, display_name AS displayName, pin_hash AS verifier FROM parents ORDER BY created_at').all();
       return json(res, 200, { verifiers });
@@ -438,6 +576,12 @@ async function handleApi(req, res, url) {
       const targetId = String(body.targetId ?? '');
       const action = String(body.action ?? '');
       if (!validateOverride(targetType, targetId, action)) return json(res, 400, { error: 'Invalid override.' });
+      if (targetType === 'target' && !db.prepare('SELECT 1 FROM device_targets WHERE device_id = ? AND target_key = ?').get(device.id, targetId)) {
+        return json(res, 404, { error: 'Discovered target not found.' });
+      }
+      if (targetType === 'website' && !db.prepare('SELECT 1 FROM custom_websites WHERE device_id = ? AND id = ?').get(device.id, targetId)) {
+        return json(res, 404, { error: 'Custom website not found.' });
+      }
       const effectiveUntil = calculateEffectiveUntil(body);
       insertOverride({
         deviceId: device.id,
@@ -525,6 +669,12 @@ async function handleApi(req, res, url) {
     const targetId = String(body.targetId ?? '');
     const action = String(body.action ?? '');
     if (!validateOverride(targetType, targetId, action)) return json(res, 400, { error: 'Invalid override.' });
+    if (targetType === 'target' && !db.prepare('SELECT 1 FROM device_targets WHERE device_id = ? AND target_key = ?').get(device.id, targetId)) {
+      return json(res, 404, { error: 'Discovered target not found.' });
+    }
+    if (targetType === 'website' && !db.prepare('SELECT 1 FROM custom_websites WHERE device_id = ? AND id = ?').get(device.id, targetId)) {
+      return json(res, 404, { error: 'Custom website not found.' });
+    }
     const effectiveUntil = calculateEffectiveUntil(body);
     const id = insertOverride({
       deviceId: device.id,
@@ -546,39 +696,40 @@ async function handleApi(req, res, url) {
     return json(res, 201, { overrideId: id, policy: resolvePolicy(db, current) });
   }
 
-  const targetProfilesMatch = path.match(/^\/api\/devices\/([^/]+)\/targets$/);
-  if (targetProfilesMatch && req.method === 'PUT') {
-    const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(targetProfilesMatch[1]);
+  const websitesMatch = path.match(/^\/api\/devices\/([^/]+)\/websites$/);
+  if (websitesMatch && req.method === 'POST') {
+    const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(websitesMatch[1]);
     if (!device) return json(res, 404, { error: 'Device not found.' });
     const body = await bodyJson(req);
-    const targetKey = String(body.targetKey ?? '');
-    const target = db.prepare('SELECT * FROM device_targets WHERE device_id = ? AND target_key = ?').get(device.id, targetKey);
-    if (!target) return json(res, 404, { error: 'Discovered target not found.' });
-    const profiles = [...new Set(Array.isArray(body.profiles) ? body.profiles.map(String) : [])]
-      .filter((profile) => ['homework', 'deep-focus'].includes(profile));
-    db.exec('BEGIN IMMEDIATE');
+    const domain = normalizeWebsite(body.url);
+    if (!domain) return json(res, 400, { error: 'Enter a valid public website or URL.' });
+    const displayName = String(body.displayName ?? '').trim() || domain;
+    if (displayName.length > 100) return json(res, 400, { error: 'Website name must be 100 characters or fewer.' });
+    const id = randomUUID();
+    const now = new Date().toISOString();
     try {
-      db.prepare('DELETE FROM device_target_profiles WHERE device_id = ? AND target_key = ?').run(device.id, targetKey);
-      const insert = db.prepare(`
-        INSERT INTO device_target_profiles (device_id, target_key, profile_id, created_at)
-        VALUES (?, ?, ?, ?)
-      `);
-      for (const profile of profiles) insert.run(device.id, targetKey, profile, new Date().toISOString());
-      db.prepare('UPDATE devices SET desired_revision = desired_revision + 1 WHERE id = ?').run(device.id);
-      db.exec('COMMIT');
+      db.prepare(`
+        INSERT INTO custom_websites (id, device_id, display_name, domain, default_blocked, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 1, ?, ?)
+      `).run(id, device.id, displayName, domain, now, now);
     } catch (error) {
-      db.exec('ROLLBACK');
+      if (String(error.message).includes('UNIQUE')) return json(res, 409, { error: 'That website is already listed for this device.' });
       throw error;
     }
-    audit(db, {
-      parentId: parent.id,
-      deviceId: device.id,
-      eventType: 'target.profiles.updated',
-      summary: `${parent.display_name} assigned ${target.display_name} to ${profiles.length ? profiles.join(' and ') : 'no profiles'}.`,
-      details: { targetKey, profiles },
-    });
-    const current = db.prepare('SELECT * FROM devices WHERE id = ?').get(device.id);
-    return json(res, 200, { targetKey, profiles, policy: resolvePolicy(db, current) });
+    incrementRevision(device.id);
+    audit(db, { parentId: parent.id, deviceId: device.id, eventType: 'website.added', summary: `${parent.display_name} added ${domain} to ${device.name}.`, details: { id, domain } });
+    return json(res, 201, { id, displayName, domain, configuredBlocked: true, blocked: true });
+  }
+
+  const websiteDeleteMatch = path.match(/^\/api\/devices\/([^/]+)\/websites\/([^/]+)$/);
+  if (websiteDeleteMatch && req.method === 'DELETE') {
+    const website = db.prepare('SELECT * FROM custom_websites WHERE device_id = ? AND id = ?').get(websiteDeleteMatch[1], websiteDeleteMatch[2]);
+    if (!website) return json(res, 404, { error: 'Custom website not found.' });
+    db.prepare('DELETE FROM custom_websites WHERE id = ?').run(website.id);
+    db.prepare("UPDATE overrides SET status = 'cancelled' WHERE device_id = ? AND target_type = 'website' AND target_id = ?").run(website.device_id, website.id);
+    incrementRevision(website.device_id);
+    audit(db, { parentId: parent.id, deviceId: website.device_id, eventType: 'website.removed', summary: `${parent.display_name} removed ${website.domain}.` });
+    return noContent(res);
   }
 
   const deleteOverrideMatch = path.match(/^\/api\/overrides\/([^/]+)$/);
@@ -635,7 +786,7 @@ async function serveStatic(res, pathname) {
   res.writeHead(200, securityHeaders({
     'Content-Type': mimeTypes[extname(filePath)] ?? 'application/octet-stream',
     'Content-Length': content.length,
-    'Cache-Control': relative === 'index.html' ? 'no-cache' : 'public, max-age=3600',
+    'Cache-Control': 'no-cache',
   }));
   res.end(content);
   return true;

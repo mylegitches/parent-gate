@@ -23,7 +23,7 @@ async function responseJson(response) {
   return body;
 }
 
-test('setup, enrollment, target discovery, assignment, and policy form one working flow', { timeout: 30000 }, async () => {
+test('setup, enrollment, direct controls, custom websites, and policy form one working flow', { timeout: 30000 }, async () => {
   const dataDirectory = mkdtempSync(join(tmpdir(), 'crackdown-api-'));
   const port = 19080 + Math.floor(Math.random() * 800);
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -43,6 +43,19 @@ test('setup, enrollment, target discovery, assignment, and policy form one worki
     const setup = await responseJson(setupResponse);
     const parentHeaders = { Cookie: cookie, 'X-CSRF-Token': setup.csrfToken, 'Content-Type': 'application/json' };
 
+    const passwordOnlyLogin = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'parent', password: 'long-test-password' }),
+    });
+    assert.equal(passwordOnlyLogin.status, 401);
+    const pinLogin = await fetch(`${baseUrl}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'parent', pin: '2468' }),
+    });
+    await responseJson(pinLogin);
+
     const code = await responseJson(await fetch(`${baseUrl}/api/enrollment-codes`, { method: 'POST', headers: parentHeaders, body: '{}' }));
     const enrollment = await responseJson(await fetch(`${baseUrl}/api/client/v1/enroll`, {
       method: 'POST',
@@ -56,21 +69,51 @@ test('setup, enrollment, target discovery, assignment, and policy form one worki
       headers: clientHeaders,
       body: JSON.stringify({ targets: [{ key: 'process:zoom.exe', displayName: 'Zoom', kind: 'application', mapping: { processes: ['zoom.exe'] } }] }),
     }));
-    await responseJson(await fetch(`${baseUrl}/api/devices/${enrollment.deviceId}/targets`, {
-      method: 'PUT',
-      headers: parentHeaders,
-      body: JSON.stringify({ targetKey: 'process:zoom.exe', profiles: ['homework'] }),
+    const activityStart = new Date(Date.now() - 5000).toISOString();
+    const activityStop = new Date().toISOString();
+    const activityResult = await responseJson(await fetch(`${baseUrl}/api/client/v1/application-events`, {
+      method: 'POST',
+      headers: clientHeaders,
+      body: JSON.stringify({ events: [
+        { id: crypto.randomUUID(), targetKey: 'process:zoom.exe', displayName: 'Zoom', categoryGuess: 'communication', eventType: 'started', occurredAt: activityStart },
+        { id: crypto.randomUUID(), targetKey: 'process:zoom.exe', displayName: 'Zoom', categoryGuess: 'communication', eventType: 'stopped', occurredAt: activityStop },
+      ] }),
     }));
+    assert.equal(activityResult.accepted, 2);
+    const websiteActivityResult = await responseJson(await fetch(`${baseUrl}/api/client/v1/website-events`, {
+      method: 'POST',
+      headers: clientHeaders,
+      body: JSON.stringify({ events: [{
+        id: crypto.randomUUID(),
+        domain: 'messages.google.com',
+        browser: 'Microsoft Edge',
+        occurredAt: new Date().toISOString(),
+      }] }),
+    }));
+    assert.equal(websiteActivityResult.accepted, 1);
     await responseJson(await fetch(`${baseUrl}/api/devices/${enrollment.deviceId}/override`, {
       method: 'PUT',
       headers: parentHeaders,
-      body: JSON.stringify({ targetType: 'profile', targetId: 'homework', action: 'set', durationMinutes: 30 }),
+      body: JSON.stringify({ targetType: 'target', targetId: 'process:zoom.exe', action: 'block' }),
+    }));
+    const website = await responseJson(await fetch(`${baseUrl}/api/devices/${enrollment.deviceId}/websites`, {
+      method: 'POST',
+      headers: parentHeaders,
+      body: JSON.stringify({ url: 'https://social.example.com/messages', displayName: 'Example Social' }),
     }));
     const policy = await responseJson(await fetch(`${baseUrl}/api/client/v1/policy`, { headers: clientHeaders }));
-    assert.equal(policy.profile, 'homework');
+    assert.equal(policy.masterEnabled, true);
     assert.equal(policy.customTargets[0].key, 'process:zoom.exe');
     assert.equal(policy.customTargets[0].blocked, true);
+    assert.equal(policy.customWebsites[0].id, website.id);
+    assert.equal(policy.customWebsites[0].domain, 'social.example.com');
+    assert.equal(policy.customWebsites[0].blocked, true);
     assert.equal(policy.pinVerifiers.length, 1);
+    const dashboardDevices = await responseJson(await fetch(`${baseUrl}/api/devices`, { headers: parentHeaders }));
+    assert.equal(dashboardDevices.devices[0].applicationActivity.length, 2);
+    assert.equal(dashboardDevices.devices[0].applicationActivity[0].eventType, 'stopped');
+    assert.equal(dashboardDevices.devices[0].websiteActivity.length, 1);
+    assert.equal(dashboardDevices.devices[0].websiteActivity[0].domain, 'messages.google.com');
 
     const operationId = crypto.randomUUID();
     const localOperation = {
@@ -80,8 +123,8 @@ test('setup, enrollment, target discovery, assignment, and policy form one worki
       parentKeyId: policy.pinVerifiers[0].parentKeyId,
       targetType: 'service',
       targetId: 'youtube',
-      action: 'allow',
-      durationMinutes: 30,
+      action: 'block',
+      durationMinutes: 0,
     };
     const localResult = await responseJson(await fetch(`${baseUrl}/api/client/v1/local-operations`, {
       method: 'POST', headers: clientHeaders, body: JSON.stringify(localOperation),

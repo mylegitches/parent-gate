@@ -20,7 +20,11 @@ final class FamilyControlsManager: ObservableObject {
     }
 
     func configuredKeys() -> [String] {
-        ["discord", "netflix", "paramount", "discovery", "hulu", "youtube"].filter {
+        [
+            "discord", "snapchat", "facebook", "instagram", "whatsapp", "telegram",
+            "signal", "slack", "teams", "google-chat", "google-messages", "zoom", "reddit", "tiktok",
+            "x-twitter", "roblox", "netflix", "paramount", "discovery", "hulu", "youtube"
+        ].filter {
             defaults.data(forKey: "selection.\($0)") != nil
         }
     }
@@ -39,4 +43,3 @@ final class FamilyControlsManager: ObservableObject {
         store.shield.webDomains = webDomains.isEmpty ? nil : webDomains
     }
 }
-
