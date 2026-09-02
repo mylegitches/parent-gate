@@ -1,4 +1,11 @@
-const state = { csrf: null, me: null, devices: [], setupRequired: false };
+const state = {
+  csrf: null,
+  me: null,
+  devices: [],
+  setupRequired: false,
+  lastInteractionAt: 0,
+  automaticRefreshPending: false,
+};
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
@@ -66,9 +73,22 @@ function showDashboard() {
   $('#dashboard').hidden = false;
 }
 
-async function refreshAll() {
+function dashboardIsBusy() {
+  const active = document.activeElement;
+  const editing = active?.matches?.('input, textarea, select, [contenteditable="true"]');
+  const dialogOpen = Boolean(document.querySelector('dialog[open]'));
+  const recentlyActive = Date.now() - state.lastInteractionAt < 30000;
+  return editing || dialogOpen || recentlyActive;
+}
+
+async function refreshAll({ automatic = false } = {}) {
   const [{ devices }, { events }] = await Promise.all([api('/api/devices'), api('/api/audit')]);
   state.devices = devices;
+  if (automatic && dashboardIsBusy()) {
+    state.automaticRefreshPending = true;
+    return;
+  }
+  state.automaticRefreshPending = false;
   renderDevices();
   renderAudit(events);
 }
@@ -457,6 +477,16 @@ $('#parent-form').addEventListener('submit', async (event) => {
 document.addEventListener('click', (event) => {
   if (event.target.dataset.closeDialog) $(`#${event.target.dataset.closeDialog}`).close();
 });
+
+for (const eventName of ['pointerdown', 'keydown', 'input', 'change']) {
+  document.addEventListener(eventName, (event) => {
+    if (event.isTrusted && !$('#dashboard').hidden) state.lastInteractionAt = Date.now();
+  }, { passive: true });
+}
+window.addEventListener('scroll', (event) => {
+  if (event.isTrusted && !$('#dashboard').hidden) state.lastInteractionAt = Date.now();
+}, { passive: true });
+
 $('#refresh-button').addEventListener('click', () => refreshAll().catch((error) => showNotice(error.message, true)));
 $('#logout-button').addEventListener('click', async () => {
   await api('/api/auth/logout', { method: 'POST', body: {} });
@@ -466,7 +496,7 @@ $('#logout-button').addEventListener('click', async () => {
 });
 
 window.setInterval(() => {
-  if (!$('#dashboard').hidden) refreshAll().catch(() => {});
+  if (!$('#dashboard').hidden) refreshAll({ automatic: true }).catch(() => {});
 }, 10000);
 
 initialize().catch((error) => {
