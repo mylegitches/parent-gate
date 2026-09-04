@@ -3,15 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#101828">
-  <title>Operation Crackdown</title>
-  <link rel="stylesheet" href="/styles.css?v=0.1.1">
+  <meta name="theme-color" content="#052b80">
+  <title>ParentGate</title>
+  <link rel="icon" href="/favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="stylesheet" href="/styles.css?v=0.3.10">
 </head>
 <body>
   <main class="shell">
     <section id="auth-view" class="auth-card" hidden>
-      <div class="brand-mark">OC</div>
-      <h1>Operation Crackdown</h1>
+      <img class="brand-mark" src="/logo.png" width="56" height="56" alt="ParentGate">
+      <h1>ParentGate</h1>
       <p id="auth-copy" class="muted"></p>
       <form id="auth-form">
         <label>Username<input name="username" autocomplete="username" required minlength="3"></label>
@@ -25,25 +28,41 @@
 
     <section id="dashboard" hidden>
       <header class="topbar">
-        <div>
-          <p class="eyebrow">HOUSEHOLD FOCUS</p>
-          <h1>Operation Crackdown</h1>
-        </div>
+        <button type="button" id="home-button" class="brand-home">
+          <img class="brand-logo" src="/logo.png" width="48" height="48" alt="">
+          <span>
+            <p class="eyebrow">HOUSEHOLD FOCUS</p>
+            <h1>ParentGate</h1>
+          </span>
+        </button>
         <div class="top-actions">
           <button id="refresh-button" class="secondary">Refresh</button>
           <button id="enroll-button" class="primary">Add device</button>
-          <button id="parent-button" class="secondary">Add parent</button>
+          <button id="parent-button" class="secondary">Parents</button>
           <button id="logout-button" class="quiet">Sign out</button>
         </div>
       </header>
 
       <div id="notice" class="notice" hidden></div>
-      <section id="empty-state" class="empty" hidden>
-        <h2>No enrolled devices yet</h2>
-        <p>Create an enrollment code, then run the client installer on a device.</p>
-        <button class="primary" data-action="open-enroll">Create enrollment code</button>
+      <section id="devices-page">
+        <section id="empty-state" class="empty" hidden>
+          <h2>No enrolled devices yet</h2>
+          <p>Create an enrollment code, then run the client installer on a device.</p>
+          <button class="primary" data-action="open-enroll">Create enrollment code</button>
+        </section>
+        <section id="devices" class="device-grid" aria-live="polite"></section>
       </section>
-      <section id="devices" class="device-grid" aria-live="polite"></section>
+      <section id="parents-page" hidden>
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">PARENT ACCESS</p>
+            <h2>Parents</h2>
+            <p class="muted page-copy">Add, edit, or remove dashboard accounts. Sign-in uses username and PIN. A changed PIN reaches devices on the next policy check.</p>
+          </div>
+          <button id="add-parent-button" class="primary">Add parent</button>
+        </div>
+        <section id="parents-list" class="parent-grid" aria-live="polite"></section>
+      </section>
 
       <details class="audit-panel">
         <summary>Recent activity</summary>
@@ -68,12 +87,13 @@
     <form id="parent-form" class="dialog-card">
       <button class="dialog-close" type="button" data-close-dialog="parent-dialog" aria-label="Close">×</button>
       <p class="eyebrow">PARENT ACCESS</p>
-      <h2>Add another parent</h2>
-      <label>Display name<input name="displayName" required></label>
-      <label>Username<input name="username" required minlength="3"></label>
-      <label>Dashboard password<input name="password" type="password" required minlength="10"></label>
-      <label>Local PIN<input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4,8}" required></label>
-      <button class="primary" type="submit">Add parent</button>
+      <h2 id="parent-dialog-title">Add another parent</h2>
+      <label>Display name<input name="displayName" required maxlength="80"></label>
+      <label>Username<input name="username" required minlength="3" maxlength="40"></label>
+      <label>Dashboard password<input name="password" type="password" minlength="10" autocomplete="new-password"></label>
+      <label>Local PIN<input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4,8}" autocomplete="new-password"></label>
+      <p id="parent-secret-help" class="muted page-copy" hidden>Leave password and PIN blank to keep the current values.</p>
+      <button id="parent-submit" class="primary" type="submit">Add parent</button>
       <p id="parent-error" class="error"></p>
     </form>
   </dialog>
@@ -93,7 +113,7 @@
 
       <section class="internet-panel">
         <div class="internet-heading">
-          <div><p class="eyebrow">DEVICE INTERNET</p><h3>Internet access</h3></div>
+          <div><p class="eyebrow">SCREEN BREAK</p><h3>Internet access</h3></div>
           <span class="internet-state"></span>
         </div>
         <div class="internet-paused" hidden>
@@ -111,7 +131,7 @@
 
       <div class="controls-block">
         <div class="section-heading">
-          <div><p class="eyebrow">MASTER CONTROL</p><h3>Blocking</h3></div>
+          <div><p class="eyebrow">STUDY MODE</p><h3>Blocking</h3></div>
           <label class="duration-label">For
             <select class="duration-select">
               <option value="0" selected>Until changed</option>
@@ -122,10 +142,10 @@
           </label>
         </div>
         <div class="segmented master-buttons">
-          <button data-master-action="enable">On</button>
+          <button data-master-action="enable">Study Mode On</button>
           <button data-master-action="disable">Off</button>
         </div>
-        <p class="muted master-help">Off temporarily allows everything without forgetting your individual selections.</p>
+        <p class="muted master-help">Off temporarily lifts all blocks without forgetting your selections.</p>
       </div>
 
       <section>
@@ -142,6 +162,17 @@
           <button class="primary" type="submit">Add and block</button>
         </form>
         <div class="website-list"></div>
+      </section>
+
+      <section class="executables-panel">
+        <h3>Additional programs</h3>
+        <p class="muted target-help">Paste a full path to a Windows .exe. The client will close running copies and keep closing them while this is blocked.</p>
+        <form class="executable-form">
+          <input name="path" type="text" placeholder="C:\Games\App\App.exe" required>
+          <input name="displayName" type="text" placeholder="Name (optional)" maxlength="100">
+          <button class="primary" type="submit">Add and block</button>
+        </form>
+        <div class="executable-list"></div>
       </section>
 
       <details class="targets-panel">
@@ -170,6 +201,6 @@
     </article>
   </template>
 
-  <script type="module" src="/app.js?v=0.3.4"></script>
+  <script type="module" src="/app.js?v=0.3.10"></script>
 </body>
 </html>

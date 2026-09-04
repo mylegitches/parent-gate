@@ -5,12 +5,12 @@ param(
     [string]$ServerUrl,
     [string]$EnrollmentCode,
     [string]$DeviceName = $env:COMPUTERNAME,
-    [string]$DataDirectory = "$env:ProgramData\OperationCrackdown",
+    [string]$DataDirectory = "$env:ProgramData\ParentGate",
     [string]$HostsPath = "$env:SystemRoot\System32\drivers\etc\hosts"
 )
 
 $ErrorActionPreference = 'Stop'
-$script:ClientVersion = '0.3.3'
+$script:ClientVersion = '0.3.7'
 $script:ConfigPath = Join-Path $DataDirectory 'config.json'
 $script:PolicyPath = Join-Path $DataDirectory 'policy.json'
 $script:StatusPath = Join-Path $DataDirectory 'status.json'
@@ -22,7 +22,7 @@ $script:InternetStatePath = Join-Path $DataDirectory 'internet-pause-state.json'
 $script:NoticeMarkerPath = Join-Path $DataDirectory 'last-internet-notice.txt'
 $script:NoticeScriptPath = Join-Path $DataDirectory 'ShowInternetNotice.ps1'
 $script:UpdaterScriptPath = Join-Path $DataDirectory 'ApplyUpdate.ps1'
-$script:FirewallRuleGroup = 'Operation Crackdown Control Channel'
+$script:FirewallRuleGroup = 'ParentGate Control Channel'
 $script:LocalPort = 8765
 $script:LatestPolicy = $null
 $script:Credential = $null
@@ -107,10 +107,6 @@ function Test-UpdateManifestSignature {
 }
 
 function Start-ClientUpdate {
-    if ($script:LatestPolicy -and $script:LatestPolicy.internetBlocked) {
-        $script:UpdateStatus = 'deferred-internet-paused'
-        return $false
-    }
     $manifest = Invoke-ClientApi -Method GET -Path '/api/client/v1/update' -TimeoutSec 20
     if ($null -eq $manifest) {
         $script:UpdateStatus = 'current'
@@ -187,7 +183,7 @@ function Invoke-ClientApi {
         [ValidateSet('GET', 'POST')][string]$Method,
         [string]$Path,
         $Body = $null,
-        [int]$TimeoutSec = 5,
+        [int]$TimeoutSec = 15,
         [switch]$AllowConflict
     )
     $headers = @{ Authorization = "Bearer $script:Credential" }
@@ -342,20 +338,71 @@ function Advance-ExpiredPolicy {
     return $current
 }
 
-function Get-BlockedProcesses {
+function Get-BlockedExecutables {
     param($Policy)
     $names = New-Object Collections.Generic.HashSet[string] ([StringComparer]::OrdinalIgnoreCase)
+    $paths = New-Object Collections.Generic.HashSet[string] ([StringComparer]::OrdinalIgnoreCase)
     foreach ($service in @($Policy.services)) {
         if ($service.blocked) {
             foreach ($name in @($service.windows.processes)) { [void]$names.Add([IO.Path]::GetFileNameWithoutExtension([string]$name)) }
         }
     }
     foreach ($target in @($Policy.customTargets)) {
-        if ($target.blocked) {
-            foreach ($name in @($target.mapping.processes)) { [void]$names.Add([IO.Path]::GetFileNameWithoutExtension([string]$name)) }
+        if (-not $target.blocked -or -not $target.mapping) { continue }
+        foreach ($name in @($target.mapping.processes)) { [void]$names.Add([IO.Path]::GetFileNameWithoutExtension([string]$name)) }
+        foreach ($path in @($target.mapping.paths)) {
+            $clean = [string]$path
+            if (-not [string]::IsNullOrWhiteSpace($clean)) { [void]$paths.Add($clean) }
         }
     }
-    return @($names)
+    return @{ Names = @($names); Paths = @($paths) }
+}
+
+function Test-ProtectedProcess {
+    param($Process)
+    $protectedNames = @('csrss', 'smss', 'wininit', 'services', 'lsass', 'svchost', 'explorer', 'powershell', 'pwsh', 'conhost', 'operationcrackdown')
+    if ($Process.Id -eq $PID) { return $true }
+    if ($Process.ProcessName -in $protectedNames) { return $true }
+    try {
+        $path = [string]$Process.Path
+        if ($path -and ($path -match '(?i)\\ParentGate\\|\\Windows\\System32\\|\\Windows\\SysWOW64\\')) { return $true }
+        $command = [string]$Process.CommandLine
+        if ($command -and $command -match '(?i)ParentGate\.ps1') { return $true }
+    }
+    catch { }
+    return $false
+}
+
+function Stop-BlockedExecutables {
+    param($Policy)
+    $blocked = Get-BlockedExecutables $Policy
+    $errors = New-Object Collections.Generic.List[string]
+    $nameSet = New-Object Collections.Generic.HashSet[string] ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($name in @($blocked.Names)) { [void]$nameSet.Add($name) }
+    $pathSet = New-Object Collections.Generic.HashSet[string] ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($path in @($blocked.Paths)) { [void]$pathSet.Add($path) }
+    foreach ($process in @(Get-Process -ErrorAction SilentlyContinue)) {
+        if (Test-ProtectedProcess $process) { continue }
+        $path = $null
+        try { $path = [string]$process.Path } catch { $path = $null }
+        $matchName = $nameSet.Contains($process.ProcessName)
+        $matchPath = $path -and $pathSet.Contains($path)
+        if (-not $matchName -and -not $matchPath) { continue }
+        try { Stop-Process -Id $process.Id -Force -ErrorAction Stop }
+        catch { $errors.Add("Unable to close $($process.ProcessName)") }
+    }
+    if ($pathSet.Count -gt 0) {
+        foreach ($process in @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)) {
+            if ([int]$process.ProcessId -eq $PID) { continue }
+            $executable = [string]$process.ExecutablePath
+            $command = [string]$process.CommandLine
+            if ($command -match '(?i)ParentGate\.ps1') { continue }
+            if (-not $executable -or -not $pathSet.Contains($executable)) { continue }
+            try { Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction Stop }
+            catch { $errors.Add("Unable to close $executable") }
+        }
+    }
+    return $errors
 }
 
 function Get-BlockedDomains {
@@ -384,8 +431,8 @@ function Get-BlockedDomains {
 function Set-ManagedHosts {
     param([string[]]$Domains)
     $hostsPath = $HostsPath
-    $begin = '# BEGIN OPERATION CRACKDOWN'
-    $end = '# END OPERATION CRACKDOWN'
+    $begin = '# BEGIN PARENTGATE'
+    $end = '# END PARENTGATE'
     $content = if (Test-Path -LiteralPath $hostsPath) { Get-Content -LiteralPath $hostsPath -Raw } else { '' }
     # Get-Content -Raw returns $null for an existing empty file. Regex.Replace
     # requires a string, so normalize empty hosts files before removing our block.
@@ -422,18 +469,46 @@ function Set-ManagedHosts {
     Clear-DnsClientCache -ErrorAction SilentlyContinue
 }
 
+function Get-ControlChannelPrograms {
+    $programs = New-Object Collections.Generic.HashSet[string] ([StringComparer]::OrdinalIgnoreCase)
+    [void]$programs.Add((Join-Path $PSHOME 'powershell.exe'))
+    $pwsh = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+    if ($pwsh -and $pwsh.Source) { [void]$programs.Add([string]$pwsh.Source) }
+    try {
+        $self = [string](Get-Process -Id $PID -ErrorAction Stop).Path
+        if ($self) { [void]$programs.Add($self) }
+    }
+    catch { }
+    return @($programs)
+}
+
 function Get-ControlEndpoint {
+    param(
+        [string[]]$FallbackAddresses = @(),
+        [int]$FallbackPort = 0
+    )
     $uri = [Uri]$script:Config.serverUrl
     $port = if (-not $uri.IsDefaultPort) { $uri.Port } elseif ($uri.Scheme -eq 'https') { 443 } else { 80 }
     $addresses = New-Object Collections.Generic.List[string]
-    if ($uri.HostNameType -eq [UriHostNameType]::IPv4 -or $uri.HostNameType -eq [UriHostNameType]::IPv6) {
-        $addresses.Add($uri.Host)
+    try {
+        if ($uri.HostNameType -eq [UriHostNameType]::IPv4 -or $uri.HostNameType -eq [UriHostNameType]::IPv6) {
+            $addresses.Add($uri.Host)
+        }
+        else {
+            foreach ($address in [Net.Dns]::GetHostAddresses($uri.Host)) { $addresses.Add($address.IPAddressToString) }
+        }
     }
-    else {
-        foreach ($address in [Net.Dns]::GetHostAddresses($uri.Host)) { $addresses.Add($address.IPAddressToString) }
+    catch {
+        foreach ($address in @($FallbackAddresses)) {
+            if (-not [string]::IsNullOrWhiteSpace($address)) { $addresses.Add($address) }
+        }
+        if ($addresses.Count -eq 0) { throw }
+        if ($FallbackPort -gt 0) { $port = $FallbackPort }
     }
     if ($addresses.Count -eq 0) { throw "Unable to resolve dashboard host $($uri.Host)." }
-    return @{ Port = $port; Addresses = @($addresses | Sort-Object -Unique) }
+    $unique = @($addresses | Sort-Object -Unique)
+    $ordered = @($unique | Where-Object { $_ -notmatch ':' }) + @($unique | Where-Object { $_ -match ':' })
+    return @{ Port = $port; Addresses = $ordered; Host = $uri.DnsSafeHost; HostIsName = -not ($uri.HostNameType -eq [UriHostNameType]::IPv4 -or $uri.HostNameType -eq [UriHostNameType]::IPv6) }
 }
 
 function Remove-ControlFirewallRules {
@@ -455,9 +530,86 @@ function Get-RestoredProfileEnabled {
     return 'NotConfigured'
 }
 
+function Set-HostsSection {
+    param([string]$Begin, [string]$End, [string[]]$Lines)
+    $hostsPath = $HostsPath
+    $content = if (Test-Path -LiteralPath $hostsPath) { Get-Content -LiteralPath $hostsPath -Raw } else { '' }
+    if ($null -eq $content) { $content = '' }
+    $pattern = '(?ms)^' + [regex]::Escape($Begin) + '.*?^' + [regex]::Escape($End) + '\s*'
+    $clean = [regex]::Replace($content, $pattern, '').TrimEnd()
+    $output = New-Object Collections.Generic.List[string]
+    $output.Add($clean)
+    if ($Lines.Count -gt 0) {
+        $output.Add('')
+        $output.Add($Begin)
+        foreach ($line in $Lines) { $output.Add($line) }
+        $output.Add($End)
+    }
+    $desired = $output -join [Environment]::NewLine
+    if ($content -eq $desired) { return }
+    [IO.File]::WriteAllText($hostsPath, $desired, [Text.Encoding]::ASCII)
+    Clear-DnsClientCache -ErrorAction SilentlyContinue
+}
+
+function Set-ControlDashboardPin {
+    param($Endpoint)
+    $begin = '# BEGIN PG-DASHBOARD-PIN'
+    $end = '# END PG-DASHBOARD-PIN'
+    if (-not $Endpoint.HostIsName) {
+        Set-HostsSection -Begin $begin -End $end -Lines @()
+        return
+    }
+    $ip = @($Endpoint.Addresses | Where-Object { $_ -notmatch ':' }) | Select-Object -First 1
+    if (-not $ip) { $ip = @($Endpoint.Addresses) | Select-Object -First 1 }
+    if (-not $ip) { return }
+    Set-HostsSection -Begin $begin -End $end -Lines @("$ip $($Endpoint.Host)")
+}
+
+function Clear-ControlDashboardPin {
+    Set-HostsSection -Begin '# BEGIN PG-DASHBOARD-PIN' -End '# END PG-DASHBOARD-PIN' -Lines @()
+}
+
+function Test-ControlChannel {
+    param([int]$TimeoutSec = 15)
+    $base = $script:Config.serverUrl.TrimEnd('/')
+    Invoke-WebRequest -Uri "$base/healthz" -UseBasicParsing -TimeoutSec $TimeoutSec | Out-Null
+    if ($script:Credential) {
+        Invoke-ClientApi -Method GET -Path '/api/client/v1/policy' -TimeoutSec $TimeoutSec | Out-Null
+    }
+}
+function Restore-FirewallProfilesFromState {
+    param($State, $ErrorList)
+    foreach ($profile in @($State.profiles)) {
+        try {
+            $action = Get-RestoredOutboundAction ([string]$profile.defaultOutboundAction)
+            Set-NetFirewallProfile -Name ([string]$profile.name) -DefaultOutboundAction $action -ErrorAction Stop
+            if ($null -ne $profile.enabled) {
+                $enabled = Get-RestoredProfileEnabled ([string]$profile.enabled)
+                Set-NetFirewallProfile -Name ([string]$profile.name) -Enabled $enabled -ErrorAction Stop
+            }
+        }
+        catch { $ErrorList.Add("Firewall profile $($profile.name): $($_.Exception.Message)") }
+    }
+}
+
+function Restore-DisabledAllowRules {
+    param($Names, $ErrorList)
+    $ruleNames = @($Names | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique)
+    if ($ruleNames.Count -eq 0) { return }
+    try {
+        Set-NetFirewallRule -PolicyStore PersistentStore -Name $ruleNames -Enabled True -ErrorAction Stop
+    }
+    catch {
+        foreach ($name in $ruleNames) {
+            try { Set-NetFirewallRule -PolicyStore PersistentStore -Name ([string]$name) -Enabled True -ErrorAction Stop }
+            catch { $ErrorList.Add("Firewall rule $name`: $($_.Exception.Message)") }
+        }
+    }
+}
+
 function Enable-InternetPause {
     if (-not (Test-IsAdministrator)) { throw 'Internet pause requires an elevated client.' }
-    $endpoint = Get-ControlEndpoint
+    $refreshing = Test-Path -LiteralPath $script:FirewallStatePath
     $state = Read-JsonFile $script:FirewallStatePath $null
     if (-not $state) {
         $profiles = @(Get-NetFirewallProfile | ForEach-Object {
@@ -467,32 +619,45 @@ function Enable-InternetPause {
         Save-JsonFile $script:FirewallStatePath $state
     }
     try {
+        $endpoint = Get-ControlEndpoint -FallbackAddresses @($state.controlAddresses) -FallbackPort ([int]$state.controlPort)
+        Set-ControlDashboardPin $endpoint
         $addressKey = (@($endpoint.Addresses) -join ',')
         $existingKey = (@($state.controlAddresses) -join ',')
-        if ($addressKey -ne $existingKey -or [int]$state.controlPort -ne [int]$endpoint.Port) {
+        $ruleCount = @(Get-NetFirewallRule -Group $script:FirewallRuleGroup -ErrorAction SilentlyContinue).Count
+        if ($addressKey -ne $existingKey -or [int]$state.controlPort -ne [int]$endpoint.Port -or $ruleCount -eq 0) {
             Remove-ControlFirewallRules
-            $powershellPath = Join-Path $PSHOME 'powershell.exe'
-            New-NetFirewallRule -DisplayName 'Operation Crackdown dashboard access' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Program $powershellPath -Protocol TCP -RemoteAddress $endpoint.Addresses -RemotePort $endpoint.Port -Profile Any | Out-Null
-            New-NetFirewallRule -DisplayName 'Operation Crackdown DNS (UDP)' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Protocol UDP -RemotePort 53 -Profile Any | Out-Null
-            New-NetFirewallRule -DisplayName 'Operation Crackdown DNS (TCP)' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Protocol TCP -RemotePort 53 -Profile Any | Out-Null
-            New-NetFirewallRule -DisplayName 'Operation Crackdown DHCP (IPv4)' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Protocol UDP -LocalPort 68 -RemotePort 67 -Profile Any | Out-Null
-            New-NetFirewallRule -DisplayName 'Operation Crackdown DHCP (IPv6)' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Protocol UDP -LocalPort 546 -RemotePort 547 -Profile Any | Out-Null
+            $sharedProxyPort = [int]$endpoint.Port -in @(80, 443)
+            if (-not $sharedProxyPort) {
+                New-NetFirewallRule -DisplayName 'ParentGate dashboard destination' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Protocol TCP -RemoteAddress $endpoint.Addresses -RemotePort $endpoint.Port -Profile Any | Out-Null
+            }
+            $index = 0
+            foreach ($program in @(Get-ControlChannelPrograms)) {
+                $index += 1
+                New-NetFirewallRule -DisplayName "ParentGate dashboard access $index" -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Program $program -Protocol TCP -RemoteAddress $endpoint.Addresses -RemotePort $endpoint.Port -Profile Any | Out-Null
+            }
+            New-NetFirewallRule -DisplayName 'ParentGate DNS (UDP)' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Protocol UDP -RemotePort 53 -Profile Any | Out-Null
+            New-NetFirewallRule -DisplayName 'ParentGate DNS (TCP)' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Protocol TCP -RemotePort 53 -Profile Any | Out-Null
+            New-NetFirewallRule -DisplayName 'ParentGate DHCP (IPv4)' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Protocol UDP -LocalPort 68 -RemotePort 67 -Profile Any | Out-Null
+            New-NetFirewallRule -DisplayName 'ParentGate DHCP (IPv6)' -Group $script:FirewallRuleGroup -Direction Outbound -Action Allow -Protocol UDP -LocalPort 546 -RemotePort 547 -Profile Any | Out-Null
             $state.controlAddresses = @($endpoint.Addresses)
             $state.controlPort = [int]$endpoint.Port
             Save-JsonFile $script:FirewallStatePath $state
         }
 
         $alreadyDisabled = @($state.disabledAllowRules)
-        $enabledAllowRules = @(Get-NetFirewallRule -PolicyStore PersistentStore -Direction Outbound -Action Allow -Enabled True -ErrorAction Stop |
-            Where-Object { $_.Group -ne $script:FirewallRuleGroup })
-        $newRuleNames = @($enabledAllowRules.Name | Where-Object { $_ -notin $alreadyDisabled } | Sort-Object -Unique)
-        if ($newRuleNames.Count -gt 0) {
-            $state.disabledAllowRules = @($alreadyDisabled + $newRuleNames | Sort-Object -Unique)
-            Save-JsonFile $script:FirewallStatePath $state
+        if (-not $refreshing) {
+            $enabledAllowRules = @(Get-NetFirewallRule -PolicyStore PersistentStore -Direction Outbound -Action Allow -Enabled True -ErrorAction Stop |
+                Where-Object { $_.Group -ne $script:FirewallRuleGroup })
+            $newRuleNames = @($enabledAllowRules.Name | Where-Object { $_ -notin $alreadyDisabled } | Sort-Object -Unique)
+            if ($newRuleNames.Count -gt 0) {
+                $state.disabledAllowRules = @($alreadyDisabled + $newRuleNames | Sort-Object -Unique)
+                Save-JsonFile $script:FirewallStatePath $state
+            }
+        }
+        else {
+            $newRuleNames = @()
         }
 
-        # Switch the effective profiles first so ordinary applications lose access
-        # immediately. Disabling explicit allow rules is then a fast cleanup step.
         foreach ($profile in Get-NetFirewallProfile) {
             if ([string]$profile.Enabled -ne 'True' -or [string]$profile.DefaultOutboundAction -ne 'Block') {
                 Set-NetFirewallProfile -Name $profile.Name -Enabled True -DefaultOutboundAction Block -ErrorAction Stop
@@ -502,10 +667,13 @@ function Enable-InternetPause {
             Set-NetFirewallRule -PolicyStore PersistentStore -Name $newRuleNames -Enabled False -ErrorAction Stop
         }
 
-        Invoke-WebRequest -Uri "$($script:Config.serverUrl.TrimEnd('/'))/healthz" -UseBasicParsing -TimeoutSec 8 | Out-Null
+        Test-ControlChannel -TimeoutSec 8
     }
     catch {
         $pauseError = $_.Exception.Message
+        if ($refreshing) {
+            throw "Internet pause remains active, but the control channel needs another try: $pauseError"
+        }
         try { Disable-InternetPause }
         catch { throw "Internet pause failed ($pauseError) and rollback was incomplete: $($_.Exception.Message)" }
         throw "Internet pause was safely rolled back: $pauseError"
@@ -517,34 +685,25 @@ function Disable-InternetPause {
     $state = Read-JsonFile $script:FirewallStatePath $null
     if ($state) {
         $restoreErrors = New-Object Collections.Generic.List[string]
-        foreach ($name in @($state.disabledAllowRules)) {
-            try { Set-NetFirewallRule -PolicyStore PersistentStore -Name ([string]$name) -Enabled True -ErrorAction Stop }
-            catch { $restoreErrors.Add("Firewall rule $name`: $($_.Exception.Message)") }
-        }
-        foreach ($profile in @($state.profiles)) {
-            try {
-                $action = Get-RestoredOutboundAction ([string]$profile.defaultOutboundAction)
-                Set-NetFirewallProfile -Name ([string]$profile.name) -DefaultOutboundAction $action -ErrorAction Stop
-                if ($null -ne $profile.enabled) {
-                    $enabled = Get-RestoredProfileEnabled ([string]$profile.enabled)
-                    Set-NetFirewallProfile -Name ([string]$profile.name) -Enabled $enabled -ErrorAction Stop
-                }
-            }
-            catch { $restoreErrors.Add("Firewall profile $($profile.name): $($_.Exception.Message)") }
-        }
+        Restore-FirewallProfilesFromState $state $restoreErrors
         Remove-ControlFirewallRules
+        try { Clear-ControlDashboardPin } catch { $restoreErrors.Add("Dashboard host pin: $($_.Exception.Message)") }
+        Restore-DisabledAllowRules @($state.disabledAllowRules) $restoreErrors
         if ($restoreErrors.Count -gt 0) { throw "Internet restore was incomplete: $($restoreErrors -join '; ')" }
         Remove-Item -LiteralPath $script:FirewallStatePath -Force -ErrorAction SilentlyContinue
     }
-    elseif (-not $script:InternetPauseKnownDisabled) { Remove-ControlFirewallRules }
+    elseif (-not $script:InternetPauseKnownDisabled) {
+        Remove-ControlFirewallRules
+        Clear-ControlDashboardPin
+    }
     $script:InternetPauseKnownDisabled = $true
 }
 
 function Ensure-EmergencyRestoreShortcut {
     $desktop = [Environment]::GetFolderPath('CommonDesktopDirectory')
     if ([string]::IsNullOrWhiteSpace($desktop)) { return }
-    $shortcutPath = Join-Path $desktop 'Operation Crackdown Emergency Restore.cmd'
-    $command = '@echo off' + "`r`n" + 'powershell.exe -NoProfile -Command "Start-Process powershell.exe -Verb RunAs -ArgumentList ''-NoProfile -NoExit -ExecutionPolicy Bypass -File ""C:\ProgramData\OperationCrackdown\ApplyUpdate.ps1"" -EmergencyRestore''"'
+    $shortcutPath = Join-Path $desktop 'ParentGate Emergency Restore.cmd'
+    $command = '@echo off' + "`r`n" + 'powershell.exe -NoProfile -Command "Start-Process powershell.exe -Verb RunAs -ArgumentList ''-NoProfile -NoExit -ExecutionPolicy Bypass -File ""C:\ProgramData\ParentGate\ApplyUpdate.ps1"" -EmergencyRestore''"'
     if (-not (Test-Path -LiteralPath $shortcutPath) -or (Get-Content -LiteralPath $shortcutPath -Raw) -ne $command) {
         Set-Content -LiteralPath $shortcutPath -Value $command -Encoding ASCII -NoNewline
     }
@@ -576,11 +735,8 @@ function Update-InternetNotice {
 function Apply-Policy {
     param($Policy)
     $errors = New-Object Collections.Generic.List[string]
-    $blockedProcesses = @(Get-BlockedProcesses $Policy)
-    foreach ($name in $blockedProcesses) {
-        try { Get-Process -Name $name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction Stop }
-        catch { $errors.Add("Unable to close $name") }
-    }
+    $blocked = Get-BlockedExecutables $Policy
+    foreach ($errorMessage in @(Stop-BlockedExecutables $Policy)) { $errors.Add($errorMessage) }
     try { Set-ManagedHosts @(Get-BlockedDomains $Policy) }
     catch { $errors.Add("Website enforcement failed: $($_.Exception.Message)") }
     try { Update-InternetNotice $Policy }
@@ -602,7 +758,8 @@ function Apply-Policy {
     $status = @{
         state = if ($errors.Count -eq 0) { 'applied' } else { 'degraded' }
         profile = $Policy.profile
-        blockedProcesses = $blockedProcesses
+        blockedProcesses = @($blocked.Names)
+        blockedPaths = @($blocked.Paths)
         errors = $errors.ToArray()
         elevated = Test-IsAdministrator
         localPort = $script:LocalPort
@@ -943,6 +1100,21 @@ function Handle-LocalTcpClient {
     finally { $Client.Dispose() }
 }
 
+function Stop-ForeignClientListeners {
+    param([int]$Port = $script:LocalPort)
+    foreach ($connection in @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)) {
+        if ([int]$connection.OwningProcess -eq $PID) { continue }
+        Stop-Process -Id $connection.OwningProcess -Force -ErrorAction SilentlyContinue
+    }
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        $busy = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+            Where-Object { [int]$_.OwningProcess -ne $PID })
+        if ($busy.Count -eq 0) { return }
+        Start-Sleep -Milliseconds 250
+    }
+    throw "Local port $Port is still in use by another process."
+}
+
 function Start-Agent {
     if (-not (Test-Path -LiteralPath $script:ConfigPath)) { throw "Client is not enrolled. Missing $script:ConfigPath" }
     $script:Config = Read-JsonFile $script:ConfigPath $null
@@ -950,8 +1122,21 @@ function Start-Agent {
     $script:LocalPort = if ($script:Config.localPort) { [int]$script:Config.localPort } else { 8765 }
     $script:LatestPolicy = Read-JsonFile $script:PolicyPath $null
     Ensure-EmergencyRestoreShortcut
+    Stop-ForeignClientListeners
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $script:LocalPort)
-    $listener.Start()
+    $started = $false
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        try {
+            $listener.Start()
+            $started = $true
+            break
+        }
+        catch {
+            Stop-ForeignClientListeners
+            Start-Sleep -Milliseconds (200 * $attempt)
+        }
+    }
+    if (-not $started) { throw "Unable to listen on local port $($script:LocalPort)." }
     $clientTask = $listener.AcceptTcpClientAsync()
     $nextPoll = [DateTime]::MinValue
     $nextScan = [DateTime]::MinValue
@@ -967,19 +1152,26 @@ function Start-Agent {
             }
             if ($now -ge $nextPoll) {
                 try {
-                    if (Sync-PendingOperations) {
-                        $policy = Invoke-ClientApi -Method GET -Path '/api/client/v1/policy'
+                    $synced = $false
+                    try { [void](Sync-PendingOperations) } catch { $script:LastError = "Local override waiting to sync: $($_.Exception.Message)" }
+                    try {
+                        $policy = Invoke-ClientApi -Method GET -Path '/api/client/v1/policy' -TimeoutSec 15
                         $script:LatestPolicy = $policy
                         Save-JsonFile $script:PolicyPath $policy
+                        $synced = $true
+                    }
+                    catch {
+                        $script:LastError = "Dashboard sync failed: $($_.Exception.Message)"
                     }
                     if ($script:LatestPolicy) {
                         $status = Apply-Policy $script:LatestPolicy
                         Send-Status $script:LatestPolicy $status
                     }
-                    $script:LastError = $null
+                    if ($synced) { $script:LastError = $null }
                 }
                 catch { $script:LastError = "Dashboard sync failed: $($_.Exception.Message)" }
-                $nextPoll = $now.AddSeconds(8)
+                $pollSeconds = if ($script:LatestPolicy -and [bool]$script:LatestPolicy.internetBlocked) { 2 } else { 8 }
+                $nextPoll = [DateTime]::UtcNow.AddSeconds($pollSeconds)
                 if ($clientTask.IsCompleted) {
                     Handle-LocalTcpClient $clientTask.Result
                     $clientTask = $listener.AcceptTcpClientAsync()
@@ -1004,7 +1196,9 @@ function Start-Agent {
                 $nextUpdateCheck = $now.AddMinutes(5)
             }
             if ($now -ge $nextScan) {
-                Send-Targets
+                if (-not ($script:LatestPolicy -and $script:LatestPolicy.internetBlocked)) {
+                    Send-Targets
+                }
                 $nextScan = $now.AddMinutes(2)
                 if ($clientTask.IsCompleted) {
                     Handle-LocalTcpClient $clientTask.Result

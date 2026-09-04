@@ -66,8 +66,8 @@ test('setup, enrollment, direct controls, custom websites, and policy form one w
     const clientHeaders = { Authorization: `Bearer ${enrollment.credential}`, 'Content-Type': 'application/json' };
 
     const update = await responseJson(await fetch(`${baseUrl}/api/client/v1/update`, { headers: clientHeaders }));
-    assert.equal(update.version, '0.3.3');
-    assert.deepEqual(update.files.map((file) => file.name), ['OperationCrackdown.ps1', 'ShowInternetNotice.ps1', 'ApplyUpdate.ps1']);
+    assert.equal(update.version, '0.3.7');
+    assert.deepEqual(update.files.map((file) => file.name), ['ParentGate.ps1', 'ShowInternetNotice.ps1', 'ApplyUpdate.ps1']);
     const updateCanonical = [update.version, ...update.files.map((file) => `${file.name}|${file.sha256}|${file.url}`)].join('\n');
     const updateKey = createHash('sha256').update(enrollment.credential, 'utf8').digest();
     assert.equal(createHmac('sha256', updateKey).update(updateCanonical).digest('hex'), update.signature);
@@ -115,6 +115,19 @@ test('setup, enrollment, direct controls, custom websites, and policy form one w
       headers: parentHeaders,
       body: JSON.stringify({ url: 'https://social.example.com/messages', displayName: 'Example Social' }),
     }));
+    const executable = await responseJson(await fetch(`${baseUrl}/api/devices/${enrollment.deviceId}/executables`, {
+      method: 'POST',
+      headers: parentHeaders,
+      body: JSON.stringify({ path: 'C:\\Games\\Roblox\\RobloxPlayerBeta.exe', displayName: 'Roblox Player' }),
+    }));
+    assert.equal(executable.path, 'C:\\Games\\Roblox\\RobloxPlayerBeta.exe');
+    assert.equal(executable.blocked, true);
+    const rejectedSystemExe = await fetch(`${baseUrl}/api/devices/${enrollment.deviceId}/executables`, {
+      method: 'POST',
+      headers: parentHeaders,
+      body: JSON.stringify({ path: 'C:\\Windows\\System32\\notepad.exe' }),
+    });
+    assert.equal(rejectedSystemExe.status, 400);
     const missingMessage = await fetch(`${baseUrl}/api/devices/${enrollment.deviceId}/override`, {
       method: 'PUT',
       headers: parentHeaders,
@@ -132,7 +145,7 @@ test('setup, enrollment, direct controls, custom websites, and policy form one w
       headers: clientHeaders,
       body: JSON.stringify({
         appliedRevision: 0,
-        clientVersion: '0.3.3',
+        clientVersion: '0.3.7',
         capabilities: ['target-scan', 'internet-pause-message', 'self-update'],
         status: { state: 'applied' },
       }),
@@ -159,15 +172,19 @@ test('setup, enrollment, direct controls, custom websites, and policy form one w
     assert.equal(restore.policy.internetBlocked, false);
     const policy = await responseJson(await fetch(`${baseUrl}/api/client/v1/policy`, { headers: clientHeaders }));
     assert.equal(policy.masterEnabled, true);
-    assert.equal(policy.customTargets[0].key, 'process:zoom.exe');
-    assert.equal(policy.customTargets[0].blocked, true);
+    assert.equal(policy.customTargets.find((target) => target.key === 'process:zoom.exe').blocked, true);
     assert.equal(policy.customWebsites[0].id, website.id);
     assert.equal(policy.customWebsites[0].domain, 'social.example.com');
     assert.equal(policy.customWebsites[0].blocked, true);
+    const addedExe = policy.customTargets.find((target) => target.key === executable.key);
+    assert.equal(addedExe.displayName, 'Roblox Player');
+    assert.equal(addedExe.blocked, true);
+    assert.deepEqual(addedExe.mapping.paths, ['C:\\Games\\Roblox\\RobloxPlayerBeta.exe']);
+    assert.deepEqual(addedExe.mapping.processes, ['RobloxPlayerBeta.exe']);
     assert.equal(policy.pinVerifiers.length, 1);
     const dashboardDevices = await responseJson(await fetch(`${baseUrl}/api/devices`, { headers: parentHeaders }));
-    assert.equal(dashboardDevices.devices[0].clientVersion, '0.3.3');
-    assert.equal(dashboardDevices.devices[0].latestClientVersion, '0.3.3');
+    assert.equal(dashboardDevices.devices[0].clientVersion, '0.3.7');
+    assert.equal(dashboardDevices.devices[0].latestClientVersion, '0.3.7');
     assert.equal(dashboardDevices.devices[0].updateAvailable, false);
     assert.equal(dashboardDevices.devices[0].applicationActivity.length, 2);
     assert.equal(dashboardDevices.devices[0].applicationActivity[0].eventType, 'stopped');

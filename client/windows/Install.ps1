@@ -11,9 +11,9 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     throw 'Run this installer from an elevated PowerShell window (Run as administrator).'
 }
 
-$installDirectory = "$env:ProgramData\OperationCrackdown"
-$agentSource = Join-Path $PSScriptRoot 'OperationCrackdown.ps1'
-$agentPath = Join-Path $installDirectory 'OperationCrackdown.ps1'
+$installDirectory = "$env:ProgramData\ParentGate"
+$agentSource = Join-Path $PSScriptRoot 'ParentGate.ps1'
+$agentPath = Join-Path $installDirectory 'ParentGate.ps1'
 $noticeSource = Join-Path $PSScriptRoot 'ShowInternetNotice.ps1'
 $noticePath = Join-Path $installDirectory 'ShowInternetNotice.ps1'
 $updaterSource = Join-Path $PSScriptRoot 'ApplyUpdate.ps1'
@@ -31,15 +31,24 @@ if (Test-Path -LiteralPath $extensionSource) {
 & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $agentPath -Mode Enroll -ServerUrl $ServerUrl -EnrollmentCode $EnrollmentCode -DeviceName $DeviceName
 if ($LASTEXITCODE -ne 0) { throw 'Device enrollment failed.' }
 
-$taskName = 'Operation Crackdown Client'
+$listener = Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue
+foreach ($connection in @($listener)) {
+    Stop-Process -Id $connection.OwningProcess -Force -ErrorAction SilentlyContinue
+}
+for ($attempt = 0; $attempt -lt 20; $attempt++) {
+    if (-not (Get-NetTCPConnection -LocalPort 8765 -State Listen -ErrorAction SilentlyContinue)) { break }
+    Start-Sleep -Milliseconds 250
+}
+
+$taskName = 'ParentGate Client'
 $taskCommand = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$agentPath`" -Mode Run"
 schtasks.exe /Create /TN $taskName /SC ONLOGON /RL HIGHEST /TR $taskCommand /F | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'Failed to create the elevated Operation Crackdown scheduled task.' }
-$taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+if ($LASTEXITCODE -ne 0) { throw 'Failed to create the elevated ParentGate scheduled task.' }
+$taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 1)
 Set-ScheduledTask -TaskName $taskName -Settings $taskSettings | Out-Null
 
 $desktop = [Environment]::GetFolderPath('CommonDesktopDirectory')
-$shortcutPath = Join-Path $desktop 'Operation Crackdown Parent Override.url'
+$shortcutPath = Join-Path $desktop 'ParentGate Parent Override.url'
 @"
 [InternetShortcut]
 URL=http://127.0.0.1:8765/
@@ -48,8 +57,8 @@ IconIndex=47
 "@ | Set-Content -LiteralPath $shortcutPath -Encoding ASCII
 
 schtasks.exe /Run /TN $taskName | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'Operation Crackdown was installed, but the scheduled task could not be started.' }
-Write-Host 'Operation Crackdown is installed. The local parent override shortcut is on the desktop.'
+if ($LASTEXITCODE -ne 0) { throw 'ParentGate was installed, but the scheduled task could not be started.' }
+Write-Host 'ParentGate is installed. The local parent override shortcut is on the desktop.'
 if (Test-Path -LiteralPath $extensionPath) {
     Write-Host "For website auditing, load this unpacked extension in Edge or Chrome: $extensionPath"
 }

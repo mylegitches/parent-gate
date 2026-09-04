@@ -57,6 +57,29 @@ test('master off pauses blocks without forgetting selections', () => {
   }
 });
 
+test('parent-added executable paths are blocked and survive master off as a saved selection', () => {
+  const { directory, db, device } = fixture();
+  try {
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO device_targets
+        (device_id, target_key, display_name, target_kind, mapping_json, source, first_seen, last_seen)
+      VALUES (?, 'path:abc123', 'Custom Game', 'application', '{"processes":["Game.exe"],"paths":["C:\\\\Games\\\\Game.exe"]}', 'parent-path', ?, ?)
+    `).run(device.id, now, now);
+    addOverride(db, device.id, 'game', 'target', 'path:abc123', 'block', now);
+    const policy = resolvePolicy(db, device);
+    assert.equal(policy.customTargets[0].mapping.paths[0], 'C:\\Games\\Game.exe');
+    assert.equal(policy.customTargets[0].blocked, true);
+    addOverride(db, device.id, 'master', 'master', 'blocking', 'disable', now);
+    const paused = resolvePolicy(db, device).customTargets[0];
+    assert.equal(paused.configuredBlocked, true);
+    assert.equal(paused.blocked, false);
+  } finally {
+    db.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('discovered application targets can be blocked directly', () => {
   const { directory, db, device } = fixture();
   try {

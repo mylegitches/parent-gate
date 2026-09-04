@@ -17,7 +17,7 @@ $state = Read-PauseState
 if (-not $state -or -not $state.internetBlocked -or [string]$state.noticeId -ne $NoticeId) { exit 0 }
 
 $form = New-Object Windows.Forms.Form
-$form.Text = 'Operation Crackdown'
+$form.Text = 'ParentGate'
 $form.Size = New-Object Drawing.Size(580, 310)
 $form.StartPosition = 'CenterScreen'
 $form.TopMost = $true

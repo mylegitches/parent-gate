@@ -2,7 +2,7 @@
 param()
 
 $ErrorActionPreference = 'Stop'
-$repairLogDirectory = "$env:ProgramData\OperationCrackdown"
+$repairLogDirectory = "$env:ProgramData\ParentGate"
 $repairLog = Join-Path $repairLogDirectory 'repair-error.log'
 trap {
     New-Item -ItemType Directory -Path $repairLogDirectory -Force | Out-Null
@@ -15,10 +15,10 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     throw 'Run this repair from an elevated PowerShell window (Run as administrator).'
 }
 
-$installDirectory = "$env:ProgramData\OperationCrackdown"
+$installDirectory = "$env:ProgramData\ParentGate"
 $configPath = Join-Path $installDirectory 'config.json'
-$agentSource = Join-Path $PSScriptRoot 'OperationCrackdown.ps1'
-$agentPath = Join-Path $installDirectory 'OperationCrackdown.ps1'
+$agentSource = Join-Path $PSScriptRoot 'ParentGate.ps1'
+$agentPath = Join-Path $installDirectory 'ParentGate.ps1'
 $noticeSource = Join-Path $PSScriptRoot 'ShowInternetNotice.ps1'
 $noticePath = Join-Path $installDirectory 'ShowInternetNotice.ps1'
 $updaterSource = Join-Path $PSScriptRoot 'ApplyUpdate.ps1'
@@ -61,11 +61,11 @@ if (Test-Path -LiteralPath $extensionSource) {
 $startupLog = Join-Path $installDirectory 'startup-error.log'
 Remove-Item -LiteralPath $startupLog -Force -ErrorAction SilentlyContinue
 
-$taskName = 'Operation Crackdown Client'
+$taskName = 'ParentGate Client'
 $taskCommand = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$agentPath`" -Mode Run"
 schtasks.exe /Create /TN $taskName /SC ONLOGON /RL HIGHEST /TR $taskCommand /F | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'Failed to create the elevated Operation Crackdown scheduled task.' }
-$taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+if ($LASTEXITCODE -ne 0) { throw 'Failed to create the elevated ParentGate scheduled task.' }
+$taskSettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 1)
 Set-ScheduledTask -TaskName $taskName -Settings $taskSettings | Out-Null
 
 schtasks.exe /Run /TN $taskName | Out-Null
@@ -78,7 +78,7 @@ if ($task.State -ne 'Running') {
     throw "The repaired task is not running (state: $($task.State)). $detail"
 }
 
-Write-Host 'Operation Crackdown repaired. Existing enrollment was preserved and the elevated client is running.'
+Write-Host 'ParentGate repaired. Existing enrollment was preserved and the elevated client is running.'
 if (Test-Path -LiteralPath $extensionPath) {
     Write-Host "For website auditing, load this unpacked extension in Edge or Chrome: $extensionPath"
 }

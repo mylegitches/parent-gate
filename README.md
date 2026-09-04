@@ -324,7 +324,7 @@ The client should resolve and validate the configured dashboard hostname before 
 
 An Offline policy must also contain a finite expiration time that the client enforces locally. The client cannot rely exclusively on receiving a future unblock instruction, because the NAS, reverse proxy, DNS, or home network may be unavailable. When the locally stored expiration is reached, the client removes the Offline firewall rules even if it cannot contact the dashboard.
 
-If the home router is used to pause the entire PC, the Windows client will necessarily lose contact with the dashboard. That pause must be reversed through the router app or interface, not through Operation Crackdown. The dashboard should clearly distinguish this router-level condition from its own policies rather than claiming the client is merely offline for an unknown reason.
+If the home router is used to pause the entire PC, the Windows client will necessarily lose contact with the dashboard. That pause must be reversed through the router app or interface, not through ParentGate. The dashboard should clearly distinguish this router-level condition from its own policies rather than claiming the client is merely offline for an unknown reason.
 
 ## Enforcement approach
 

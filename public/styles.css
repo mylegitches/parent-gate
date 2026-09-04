@@ -29,6 +29,17 @@ h3 { font-size: 1rem; margin-bottom: 10px; }
 .muted { color: var(--muted); }
 .eyebrow { color: var(--blue); font-size: .72rem; font-weight: 800; letter-spacing: .13em; margin-bottom: 5px; }
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 26px; }
+.brand-home { display: flex; align-items: center; gap: 12px; background: transparent; border: 0; padding: 0; text-align: left; color: inherit; }
+.brand-home:hover { filter: none; }
+.brand-logo { width: 48px; height: 48px; border-radius: 12px; display: block; flex-shrink: 0; }
+.page-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 18px; }
+.page-heading h2 { margin-bottom: 6px; }
+.page-copy { font-size: .9rem; max-width: 46rem; }
+.parent-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 18px; align-items: start; }
+.parent-card .device-header { border-bottom: 0; padding-bottom: 0; }
+.parent-username { margin: 5px 0 0; font-size: .9rem; }
+.parent-card .device-meta { margin-left: 0; }
+.you-badge { font-size: .72rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; padding: 6px 9px; border-radius: 999px; background: #edf3ff; color: var(--blue-dark); }
 .top-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 button { border: 1px solid transparent; border-radius: 10px; padding: 10px 14px; font-weight: 700; background: #e8ecf4; color: var(--ink); }
 button:hover { filter: brightness(.97); }
@@ -45,7 +56,7 @@ button.small { padding: 7px 10px; font-size: .82rem; }
 .error { color: var(--red); min-height: 1.3em; margin: 8px 0 0; }
 .empty, .auth-card { max-width: 520px; margin: 12vh auto 0; padding: 34px; border: 1px solid var(--line); border-radius: 20px; background: var(--surface); box-shadow: var(--shadow); }
 .empty { text-align: center; }
-.brand-mark { width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; background: var(--blue); color: white; font-weight: 900; margin-bottom: 18px; }
+.brand-mark { width: 56px; height: 56px; border-radius: 14px; display: block; margin-bottom: 18px; }
 label { display: grid; gap: 6px; font-weight: 700; color: #344054; margin-bottom: 15px; }
 input, select, textarea { width: 100%; border: 1px solid #cbd2df; border-radius: 9px; padding: 10px 11px; color: var(--ink); background: white; }
 .device-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 470px), 1fr)); gap: 18px; align-items: start; }
@@ -86,9 +97,12 @@ button.danger { background: #b42318; color: white; border-color: #b42318; }
 .service-state { display: inline-block; margin-left: 7px; font-size: .72rem; font-weight: 800; text-transform: uppercase; color: var(--green); }
 .service-state.blocked { color: var(--red); }
 .service-actions { display: flex; gap: 5px; }
-.website-form { display: grid; grid-template-columns: 1.4fr 1fr auto; gap: 7px; margin-bottom: 10px; }
-.website-form input { margin: 0; }
-.website-domain { display: block; color: var(--muted); margin-top: 3px; }
+.website-form,
+.executable-form { display: grid; grid-template-columns: 1.4fr 1fr auto; gap: 7px; margin-bottom: 10px; }
+.website-form input,
+.executable-form input { margin: 0; }
+.website-domain,
+.executable-path { display: block; color: var(--muted); margin-top: 3px; word-break: break-all; }
 .empty-list { font-size: .82rem; }
 details summary { cursor: pointer; font-weight: 750; }
 .target-count { color: var(--muted); font-weight: 500; }
@@ -125,11 +139,13 @@ dialog::backdrop { background: rgba(16, 24, 40, .52); backdrop-filter: blur(2px)
 @media (max-width: 720px) {
   .shell { width: min(100% - 20px, 1180px); padding-top: 20px; }
   .topbar { align-items: flex-start; flex-direction: column; }
+  .page-heading { flex-direction: column; }
   .top-actions { justify-content: flex-start; }
   .device-card { padding: 16px; }
   .section-heading { align-items: flex-start; }
   .duration-label { display: grid; }
-  .website-form { grid-template-columns: 1fr; }
+  .website-form,
+  .executable-form { grid-template-columns: 1fr; }
   .service-row { grid-template-columns: 1fr; }
   .service-actions { flex-wrap: wrap; }
   .audit-item { grid-template-columns: 1fr; gap: 3px; }

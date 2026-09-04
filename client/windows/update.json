@@ -1,8 +1,8 @@
 {
-  "version": "0.3.3",
-  "releasedAt": "2026-09-02T00:00:00.000Z",
+  "version": "0.3.7",
+  "releasedAt": "2026-09-02T22:15:00.000Z",
   "files": [
-    "OperationCrackdown.ps1",
+    "ParentGate.ps1",
     "ShowInternetNotice.ps1",
     "ApplyUpdate.ps1"
   ]

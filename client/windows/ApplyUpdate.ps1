@@ -3,19 +3,23 @@ param(
     [string]$StagingDirectory,
     [string]$ExpectedVersion,
     [int]$ParentProcessId,
-    [string]$InstallDirectory = "$env:ProgramData\OperationCrackdown",
+    [string]$InstallDirectory = "$env:ProgramData\ParentGate",
     [switch]$EmergencyRestore
 )
 
 $ErrorActionPreference = 'Stop'
-$taskName = 'Operation Crackdown Client'
+$taskName = 'ParentGate Client'
 $statusPath = Join-Path $InstallDirectory 'status.json'
 $logPath = Join-Path $InstallDirectory 'update-error.log'
 $backupDirectory = Join-Path $InstallDirectory 'update-backup'
-$files = @('OperationCrackdown.ps1', 'ShowInternetNotice.ps1', 'ApplyUpdate.ps1')
+$files = @('ParentGate.ps1', 'ShowInternetNotice.ps1', 'ApplyUpdate.ps1')
 
 function Start-ClientTask {
-    $agentPath = Join-Path $InstallDirectory 'OperationCrackdown.ps1'
+    Stop-ClientListener
+    Start-Sleep -Milliseconds 400
+    schtasks.exe /Run /TN $taskName | Out-Null
+    if ($LASTEXITCODE -eq 0) { return }
+    $agentPath = Join-Path $InstallDirectory 'ParentGate.ps1'
     Start-Process -FilePath 'powershell.exe' -ArgumentList "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$agentPath`" -Mode Run" -WindowStyle Hidden | Out-Null
 }
 
@@ -30,10 +34,6 @@ function Restore-InternetState {
     $firewallState = if (Test-Path -LiteralPath $firewallStatePath) { Get-Content -LiteralPath $firewallStatePath -Raw | ConvertFrom-Json } else { $null }
     if ($firewallState) {
         $restoreErrors = New-Object Collections.Generic.List[string]
-        foreach ($name in @($firewallState.disabledAllowRules)) {
-            try { Set-NetFirewallRule -PolicyStore PersistentStore -Name ([string]$name) -Enabled True -ErrorAction Stop }
-            catch { $restoreErrors.Add("Firewall rule $name`: $($_.Exception.Message)") }
-        }
         foreach ($profile in @($firewallState.profiles)) {
             try {
                 $saved = [string]$profile.defaultOutboundAction
@@ -47,14 +47,25 @@ function Restore-InternetState {
             }
             catch { $restoreErrors.Add("Firewall profile $($profile.name): $($_.Exception.Message)") }
         }
+        $ruleNames = @($firewallState.disabledAllowRules | Where-Object { $_ })
+        if ($ruleNames.Count -gt 0) {
+            try { Set-NetFirewallRule -PolicyStore PersistentStore -Name $ruleNames -Enabled True -ErrorAction Stop }
+            catch {
+                foreach ($name in $ruleNames) {
+                    try { Set-NetFirewallRule -PolicyStore PersistentStore -Name ([string]$name) -Enabled True -ErrorAction Stop }
+                    catch { $restoreErrors.Add("Firewall rule $name`: $($_.Exception.Message)") }
+                }
+            }
+        }
         if ($restoreErrors.Count -gt 0) { throw "Emergency firewall restore was incomplete: $($restoreErrors -join '; ')" }
         Remove-Item -LiteralPath $firewallStatePath -Force
     }
-    Get-NetFirewallRule -Group 'Operation Crackdown Control Channel' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+    Get-NetFirewallRule -Group 'ParentGate Control Channel' -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
     $hostsPath = Join-Path $env:SystemRoot 'System32\drivers\etc\hosts'
     if (Test-Path -LiteralPath $hostsPath) {
         $content = Get-Content -LiteralPath $hostsPath -Raw
-        $clean = [regex]::Replace($content, '(?ms)^# BEGIN OPERATION CRACKDOWN.*?^# END OPERATION CRACKDOWN\s*', '').TrimEnd()
+        $clean = [regex]::Replace($content, '(?ms)^# BEGIN PARENTGATE.*?^# END PARENTGATE\s*', '').TrimEnd()
+        $clean = [regex]::Replace($clean, '(?ms)^# BEGIN PG-DASHBOARD-PIN.*?^# END PG-DASHBOARD-PIN\s*', '').TrimEnd()
         Set-Content -LiteralPath $hostsPath -Value $clean -Encoding ASCII
         Clear-DnsClientCache -ErrorAction SilentlyContinue
     }
@@ -68,7 +79,7 @@ if ($EmergencyRestore) {
     schtasks.exe /Change /TN $taskName /Disable | Out-Null
     Stop-ClientListener
     Restore-InternetState
-    Write-Host 'Operation Crackdown enforcement is disabled and its firewall and hosts-file changes were restored.'
+    Write-Host 'ParentGate enforcement is disabled and its firewall and hosts-file changes were restored.'
     Write-Host 'After restoring access in the dashboard, run Repair.ps1 as Administrator to re-enable the client.'
     exit 0
 }

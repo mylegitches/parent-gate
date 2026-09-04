@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$OutputPath = "$env:ProgramData\OperationCrackdown\firewall-diagnostic.json"
+    [string]$OutputPath = "$env:ProgramData\ParentGate\firewall-diagnostic.json"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -14,7 +14,7 @@ $report = [pscustomobject]@{
     profiles = @(Get-NetFirewallProfile | Select-Object Name, Enabled, DefaultInboundAction, DefaultOutboundAction)
     connections = @(Get-NetConnectionProfile | Select-Object Name, InterfaceAlias, NetworkCategory, IPv4Connectivity, IPv6Connectivity)
     enabledOutboundAllowRuleCount = @(Get-NetFirewallRule -PolicyStore PersistentStore -Direction Outbound -Action Allow -Enabled True -ErrorAction SilentlyContinue).Count
-    controlRules = @(Get-NetFirewallRule -Group 'Operation Crackdown Control Channel' -ErrorAction SilentlyContinue | Select-Object Name, Enabled, Direction, Action, PrimaryStatus)
+    controlRules = @(Get-NetFirewallRule -Group 'ParentGate Control Channel' -ErrorAction SilentlyContinue | Select-Object Name, Enabled, Direction, Action, PrimaryStatus)
     firewallService = Get-Service MpsSvc | Select-Object Status, StartType
 }
 

@@ -2,6 +2,7 @@ const state = {
   csrf: null,
   me: null,
   devices: [],
+  parents: [],
   setupRequired: false,
   lastInteractionAt: 0,
   automaticRefreshPending: false,
@@ -57,8 +58,8 @@ function showAuth(setup) {
   $('#display-name-row').hidden = !setup;
   $('#password-row').hidden = !setup;
   $('#auth-copy').textContent = setup
-    ? 'Create the first parent account and a PIN for local device overrides.'
-    : 'Sign in to manage household focus controls.';
+    ? 'Create the first parent account and a PIN for local device overrides. Welcome to ParentGate.'
+    : 'Sign in to manage ParentGate focus controls.';
   const password = $('#auth-form [name=password]');
   password.disabled = !setup;
   password.required = setup;
@@ -71,6 +72,19 @@ function showAuth(setup) {
 function showDashboard() {
   $('#auth-view').hidden = true;
   $('#dashboard').hidden = false;
+  applyPage();
+}
+
+function currentPage() {
+  return location.hash === '#parents' ? 'parents' : 'devices';
+}
+
+function applyPage() {
+  const page = currentPage();
+  $('#devices-page').hidden = page !== 'devices';
+  $('#parents-page').hidden = page !== 'parents';
+  $('#parent-button').classList.toggle('primary', page === 'parents');
+  $('#parent-button').classList.toggle('secondary', page !== 'parents');
 }
 
 function dashboardIsBusy() {
@@ -82,8 +96,11 @@ function dashboardIsBusy() {
 }
 
 async function refreshAll({ automatic = false } = {}) {
-  const [{ devices }, { events }] = await Promise.all([api('/api/devices'), api('/api/audit')]);
+  const requests = [api('/api/devices'), api('/api/audit')];
+  if (currentPage() === 'parents') requests.push(api('/api/parents'));
+  const [{ devices }, { events }, parentsResult] = await Promise.all(requests);
   state.devices = devices;
+  if (parentsResult) state.parents = parentsResult.parents;
   if (automatic && dashboardIsBusy()) {
     state.automaticRefreshPending = true;
     return;
@@ -91,6 +108,7 @@ async function refreshAll({ automatic = false } = {}) {
   state.automaticRefreshPending = false;
   renderDevices();
   renderAudit(events);
+  if (currentPage() === 'parents') renderParents();
 }
 
 function durationFor(card) {
@@ -136,6 +154,7 @@ function renderDevices() {
     $('.internet-paused', card).hidden = !internetBlocked;
     $('.internet-pause-form', card).hidden = internetBlocked || !supportsInternetPause;
     $('.internet-message', card).textContent = device.policy.internetMessage || 'Internet access is paused.';
+    $('.executables-panel', card).hidden = device.platform !== 'windows';
 
     const serviceList = $('.service-list', card);
     for (const service of device.policy.services) {
@@ -151,7 +170,7 @@ function renderDevices() {
       $('.service-name', row).textContent = service.displayName;
       const serviceState = $('.service-state', row);
       serviceState.textContent = service.configuredBlocked
-        ? (device.policy.masterEnabled ? 'Blocked' : 'Selected · paused')
+        ? (device.policy.masterEnabled ? 'Blocked' : 'Selected · study mode off')
         : 'Allowed';
       serviceState.classList.toggle('blocked', service.configuredBlocked);
       if (service.warning) row.title = service.warning;
@@ -178,7 +197,7 @@ function renderDevices() {
         $('.website-domain', row).textContent = website.domain;
         const websiteState = $('.service-state', row);
         websiteState.textContent = website.configuredBlocked
-          ? (device.policy.masterEnabled ? 'Blocked' : 'Selected · paused')
+          ? (device.policy.masterEnabled ? 'Blocked' : 'Selected · study mode off')
           : 'Allowed';
         websiteState.classList.toggle('blocked', website.configuredBlocked);
         websiteList.append(row);
@@ -186,13 +205,42 @@ function renderDevices() {
     }
 
     const targets = device.availableTargets ?? [];
+    const pathTargets = targets.filter((target) => target.source === 'parent-path');
+    const discoveredTargets = targets.filter((target) => target.source !== 'parent-path');
+    const executableList = $('.executable-list', card);
+    if (pathTargets.length === 0) {
+      executableList.innerHTML = '<p class="muted empty-list">No extra program paths yet.</p>';
+    } else {
+      for (const target of pathTargets) {
+        const row = document.createElement('div');
+        row.className = 'service-row executable-row';
+        row.dataset.targetKey = target.key;
+        const path = target.mapping?.paths?.[0] || target.mapping?.processes?.[0] || '';
+        row.innerHTML = `
+          <div><span class="service-name"></span><span class="service-state"></span><small class="executable-path"></small></div>
+          <div class="service-actions">
+            <button class="small allow" data-target-action="allow">Allow</button>
+            <button class="small block" data-target-action="block">Block</button>
+            <button class="small quiet" data-delete-executable>Remove</button>
+          </div>`;
+        $('.service-name', row).textContent = target.displayName;
+        $('.executable-path', row).textContent = path;
+        const executableState = $('.service-state', row);
+        executableState.textContent = target.configuredBlocked
+          ? (device.policy.masterEnabled ? 'Blocked' : 'Selected · study mode off')
+          : 'Allowed';
+        executableState.classList.toggle('blocked', target.configuredBlocked);
+        executableList.append(row);
+      }
+    }
+
     const targetsByKey = new Map(targets.map((target) => [target.key, target]));
-    $('.target-count', card).textContent = `(${targets.length})`;
+    $('.target-count', card).textContent = `(${discoveredTargets.length})`;
     const targetList = $('.targets-list', card);
-    if (targets.length === 0) {
+    if (discoveredTargets.length === 0) {
       targetList.innerHTML = '<p class="muted">No candidate applications have been reported yet.</p>';
     } else {
-      for (const target of targets) {
+      for (const target of discoveredTargets) {
         const row = document.createElement('div');
         row.className = 'target-row';
         row.dataset.targetKey = target.key;
@@ -212,7 +260,7 @@ function renderDevices() {
           : 'Uncategorized';
         const targetState = $('.service-state', row);
         targetState.textContent = target.configuredBlocked
-          ? (device.policy.masterEnabled ? 'Blocked' : 'Selected · paused')
+          ? (device.policy.masterEnabled ? 'Blocked' : 'Selected · study mode off')
           : 'Allowed';
         targetState.classList.toggle('blocked', target.configuredBlocked);
         targetList.append(row);
@@ -284,6 +332,67 @@ function renderDevices() {
     }
     container.append(card);
   }
+}
+
+function renderParents() {
+  const container = $('#parents-list');
+  container.replaceChildren();
+  const onlyParent = state.parents.length <= 1;
+  for (const parent of state.parents) {
+    const card = document.createElement('article');
+    card.className = 'device-card parent-card';
+    card.dataset.parentId = parent.id;
+    card.innerHTML = `
+      <header class="device-header">
+        <div>
+          <div class="device-title-row"><h2 class="parent-name"></h2></div>
+          <p class="parent-username muted"></p>
+          <p class="device-meta muted"></p>
+        </div>
+        <div class="device-header-actions">
+          <span class="you-badge" hidden>You</span>
+          <button class="small secondary" data-edit-parent>Edit</button>
+          <button class="small quiet" data-remove-parent>Remove</button>
+        </div>
+      </header>`;
+    $('.parent-name', card).textContent = parent.displayName;
+    $('.parent-username', card).textContent = parent.username;
+    $('.device-meta', card).textContent = parent.createdAt
+      ? `Added ${new Date(parent.createdAt).toLocaleString()}`
+      : '';
+    $('.you-badge', card).hidden = !parent.isSelf;
+    const remove = $('[data-remove-parent]', card);
+    if (parent.isSelf) {
+      remove.disabled = true;
+      remove.title = 'Sign in as another parent before removing your own account.';
+    } else if (onlyParent) {
+      remove.disabled = true;
+      remove.title = 'The last parent account cannot be removed.';
+    } else {
+      remove.title = 'Remove this parent account.';
+    }
+    container.append(card);
+  }
+}
+
+function openParentDialog(parent = null) {
+  const form = $('#parent-form');
+  form.reset();
+  $('#parent-error').textContent = '';
+  const editing = Boolean(parent);
+  form.dataset.parentId = parent?.id ?? '';
+  $('#parent-dialog-title').textContent = editing ? 'Edit parent' : 'Add another parent';
+  $('#parent-submit').textContent = editing ? 'Save changes' : 'Add parent';
+  form.elements.password.required = !editing;
+  form.elements.pin.required = !editing;
+  form.elements.password.placeholder = editing ? 'Leave blank to keep' : '';
+  form.elements.pin.placeholder = editing ? 'Leave blank to keep' : '';
+  $('#parent-secret-help').hidden = !editing;
+  if (parent) {
+    form.elements.displayName.value = parent.displayName;
+    form.elements.username.value = parent.username;
+  }
+  $('#parent-dialog').showModal();
 }
 
 function renderAudit(events) {
@@ -388,6 +497,12 @@ $('#devices').addEventListener('click', async (event) => {
       showNotice('Website removed.');
       await refreshAll();
     }
+    if (event.target.hasAttribute('data-delete-executable')) {
+      const target = event.target.closest('[data-target-key]').dataset.targetKey;
+      await api(`/api/devices/${encodeURIComponent(card.dataset.deviceId)}/executables/${encodeURIComponent(target)}`, { method: 'DELETE' });
+      showNotice('Program path removed.');
+      await refreshAll();
+    }
   } catch (error) {
     showNotice(error.message, true);
   } finally {
@@ -408,6 +523,26 @@ $('#devices').addEventListener('submit', async (event) => {
         body: { targetType: 'internet', targetId: 'access', action: 'block', message: values.message },
       });
       showNotice('Internet pause sent to the device.');
+      event.target.reset();
+      await refreshAll();
+    } catch (error) {
+      showNotice(error.message, true);
+    } finally {
+      submit.disabled = false;
+    }
+    return;
+  }
+  if (event.target.matches('.executable-form')) {
+    event.preventDefault();
+    const card = event.target.closest('.device-card');
+    const submit = $('button[type=submit]', event.target);
+    submit.disabled = true;
+    try {
+      await api(`/api/devices/${encodeURIComponent(card.dataset.deviceId)}/executables`, {
+        method: 'POST',
+        body: Object.fromEntries(new FormData(event.target)),
+      });
+      showNotice('Program added and selected for blocking.');
       event.target.reset();
       await refreshAll();
     } catch (error) {
@@ -460,18 +595,76 @@ $('#enrollment-result').addEventListener('click', async (event) => {
   }
 });
 
-$('#parent-button').addEventListener('click', () => $('#parent-dialog').showModal());
+$('#home-button').addEventListener('click', () => {
+  if (location.hash) location.hash = '';
+  else applyPage();
+});
+$('#parent-button').addEventListener('click', () => {
+  if (location.hash === '#parents') {
+    applyPage();
+    refreshAll().catch((error) => showNotice(error.message, true));
+  } else {
+    location.hash = '#parents';
+  }
+});
+$('#add-parent-button').addEventListener('click', () => openParentDialog());
+$('#parents-list').addEventListener('click', async (event) => {
+  const card = event.target.closest('.parent-card');
+  if (!card || !event.target.matches('button')) return;
+  const parent = state.parents.find((item) => item.id === card.dataset.parentId);
+  if (!parent) return;
+  if (event.target.hasAttribute('data-edit-parent')) {
+    openParentDialog(parent);
+    return;
+  }
+  if (!event.target.hasAttribute('data-remove-parent')) return;
+  const confirmed = window.confirm(`Remove ${parent.displayName} from the dashboard?\n\nThey will no longer be able to sign in or use a local PIN.`);
+  if (!confirmed) return;
+  event.target.disabled = true;
+  try {
+    await api(`/api/parents/${encodeURIComponent(parent.id)}`, { method: 'DELETE' });
+    showNotice(`${parent.displayName} removed.`);
+    await refreshAll();
+  } catch (error) {
+    showNotice(error.message, true);
+    event.target.disabled = false;
+  }
+});
 $('#parent-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   $('#parent-error').textContent = '';
+  const form = event.currentTarget;
+  const values = Object.fromEntries(new FormData(form));
+  const editing = Boolean(form.dataset.parentId);
+  const body = {
+    displayName: values.displayName,
+    username: values.username,
+  };
+  if (values.password) body.password = values.password;
+  if (values.pin) body.pin = values.pin;
   try {
-    await api('/api/parents', { method: 'POST', body: Object.fromEntries(new FormData(event.currentTarget)) });
+    if (editing) {
+      await api(`/api/parents/${encodeURIComponent(form.dataset.parentId)}`, { method: 'PUT', body });
+      showNotice('Parent account updated.');
+    } else {
+      await api('/api/parents', { method: 'POST', body });
+      showNotice('Parent account added. New PIN verifiers will sync to clients.');
+    }
     $('#parent-dialog').close();
-    event.currentTarget.reset();
-    showNotice('Parent account added. New PIN verifiers will sync to clients.');
+    form.reset();
+    if (editing && form.dataset.parentId === state.me?.id) {
+      state.me = await api('/api/me');
+      state.csrf = state.me.csrfToken;
+    }
+    await refreshAll();
   } catch (error) {
     $('#parent-error').textContent = error.message;
   }
+});
+window.addEventListener('hashchange', () => {
+  applyPage();
+  if ($('#dashboard').hidden) return;
+  refreshAll().catch((error) => showNotice(error.message, true));
 });
 
 document.addEventListener('click', (event) => {
@@ -500,5 +693,5 @@ window.setInterval(() => {
 }, 10000);
 
 initialize().catch((error) => {
-  document.body.textContent = `Unable to start dashboard: ${error.message}`;
+  document.body.textContent = `Unable to start ParentGate: ${error.message}`;
 });

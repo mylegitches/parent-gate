@@ -156,6 +156,7 @@ function deviceView(device) {
     kind: target.target_kind,
     categoryGuess: target.category_guess,
     source: target.source,
+    mapping: safeJson(target.mapping_json, {}),
     currentlyRunning: Boolean(target.currently_running),
     lastSeen: target.last_seen,
     configuredBlocked: Boolean(targetPolicy.get(target.target_key)?.configuredBlocked),
@@ -250,6 +251,31 @@ function normalizeWebsite(value) {
   }
 }
 
+function normalizeExecutablePath(value) {
+  const input = String(value ?? '').trim().replace(/^["']+|["']+$/g, '');
+  if (!input || input.length > 260) return null;
+  if (/[\u0000-\u001f]/.test(input) || input.includes('..')) return null;
+  const windowsPath = input.replace(/\//g, '\\').replace(/\\+/g, '\\');
+  if (!/^[a-zA-Z]:\\/.test(windowsPath) || !/\.exe$/i.test(windowsPath)) return null;
+  const fileName = windowsPath.split('\\').pop() ?? '';
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\.exe$/i.test(fileName)) return null;
+  const lower = windowsPath.toLowerCase();
+  if (
+    lower.startsWith('c:\\windows\\')
+    || lower.includes('\\windows\\system32\\')
+    || lower.includes('\\windows\\syswow64\\')
+    || lower.includes('\\operationcrackdown\\')
+    || ['powershell.exe', 'pwsh.exe', 'cmd.exe', 'conhost.exe'].includes(fileName.toLowerCase())
+  ) {
+    return null;
+  }
+  return {
+    path: windowsPath,
+    fileName,
+    key: `path:${createHash('sha256').update(lower).digest('hex').slice(0, 32)}`,
+  };
+}
+
 function incrementRevision(deviceId) {
   db.prepare('UPDATE devices SET desired_revision = desired_revision + 1 WHERE id = ?').run(deviceId);
 }
@@ -312,16 +338,52 @@ function recordFailedLogin(key) {
   loginAttempts.set(key, entry);
 }
 
-function validateParentFields(body) {
-  const username = String(body.username ?? '').trim();
-  const displayName = String(body.displayName ?? username).trim();
-  const password = String(body.password ?? '');
-  const pin = String(body.pin ?? '');
+function validateUsername(value) {
+  const username = String(value ?? '').trim();
   if (!/^[a-zA-Z0-9._-]{3,40}$/.test(username)) return { error: 'Username must be 3–40 letters, numbers, dots, underscores, or dashes.' };
+  return { username };
+}
+
+function validateDisplayName(value, fallback = '') {
+  const displayName = String(value ?? fallback).trim();
   if (displayName.length < 1 || displayName.length > 80) return { error: 'Display name is required.' };
+  return { displayName };
+}
+
+function validatePassword(value, { required = true } = {}) {
+  const password = String(value ?? '');
+  if (!password) return required ? { error: 'Password must be at least 10 characters.' } : {};
   if (password.length < 10) return { error: 'Password must be at least 10 characters.' };
+  return { password };
+}
+
+function validatePin(value, { required = true } = {}) {
+  const pin = String(value ?? '');
+  if (!pin) return required ? { error: 'PIN must contain 4–8 digits.' } : {};
   if (!/^\d{4,8}$/.test(pin)) return { error: 'PIN must contain 4–8 digits.' };
-  return { username, displayName, password, pin };
+  return { pin };
+}
+
+function validateParentFields(body) {
+  const username = validateUsername(body.username);
+  if (username.error) return username;
+  const displayName = validateDisplayName(body.displayName, username.username);
+  if (displayName.error) return displayName;
+  const password = validatePassword(body.password);
+  if (password.error) return password;
+  const pin = validatePin(body.pin);
+  if (pin.error) return pin;
+  return { ...username, ...displayName, ...password, ...pin };
+}
+
+function parentView(row, currentParentId) {
+  return {
+    id: row.id,
+    username: row.username,
+    displayName: row.display_name,
+    createdAt: row.created_at,
+    isSelf: row.id === currentParentId,
+  };
 }
 
 async function handleApi(req, res, url) {
@@ -469,7 +531,7 @@ async function handleApi(req, res, url) {
     if (req.method === 'POST' && path === '/api/client/v1/targets') {
       const body = await bodyJson(req);
       const targets = Array.isArray(body.targets) ? body.targets.slice(0, 250) : [];
-      db.prepare('UPDATE device_targets SET currently_running = 0 WHERE device_id = ?').run(device.id);
+      db.prepare("UPDATE device_targets SET currently_running = 0 WHERE device_id = ? AND source != 'parent-path'").run(device.id);
       const upsert = db.prepare(`
         INSERT INTO device_targets
           (device_id, target_key, display_name, target_kind, category_guess, mapping_json, source, currently_running, first_seen, last_seen)
@@ -676,6 +738,12 @@ async function handleApi(req, res, url) {
     return noContent(res, { 'Set-Cookie': sessionCookie('', 0) });
   }
 
+  if (req.method === 'GET' && path === '/api/parents') {
+    const parents = db.prepare('SELECT id, username, display_name, created_at FROM parents ORDER BY created_at').all()
+      .map((row) => parentView(row, parent.id));
+    return json(res, 200, { parents });
+  }
+
   if (req.method === 'POST' && path === '/api/parents') {
     const fields = validateParentFields(await bodyJson(req));
     if (fields.error) return json(res, 400, { error: fields.error });
@@ -690,7 +758,71 @@ async function handleApi(req, res, url) {
       throw error;
     }
     audit(db, { parentId: parent.id, eventType: 'parent.created', summary: `${parent.display_name} added parent ${fields.displayName}.` });
-    return json(res, 201, { id, username: fields.username, displayName: fields.displayName });
+    return json(res, 201, parentView(db.prepare('SELECT id, username, display_name, created_at FROM parents WHERE id = ?').get(id), parent.id));
+  }
+
+  const parentMatch = path.match(/^\/api\/parents\/([^/]+)$/);
+  if (parentMatch && req.method === 'PUT') {
+    const existing = db.prepare('SELECT * FROM parents WHERE id = ?').get(parentMatch[1]);
+    if (!existing) return json(res, 404, { error: 'Parent not found.' });
+    const body = await bodyJson(req);
+    const username = body.username == null ? { username: existing.username } : validateUsername(body.username);
+    if (username.error) return json(res, 400, { error: username.error });
+    const displayName = body.displayName == null ? { displayName: existing.display_name } : validateDisplayName(body.displayName);
+    if (displayName.error) return json(res, 400, { error: displayName.error });
+    const password = validatePassword(body.password, { required: false });
+    if (password.error) return json(res, 400, { error: password.error });
+    const pin = validatePin(body.pin, { required: false });
+    if (pin.error) return json(res, 400, { error: pin.error });
+    try {
+      db.prepare('UPDATE parents SET username = ?, display_name = ? WHERE id = ?')
+        .run(username.username, displayName.displayName, existing.id);
+      if (password.password) {
+        db.prepare('UPDATE parents SET password_hash = ? WHERE id = ?').run(hashPassword(password.password), existing.id);
+      }
+      if (pin.pin) {
+        db.prepare('UPDATE parents SET pin_hash = ? WHERE id = ?').run(hashPin(pin.pin), existing.id);
+      }
+    } catch (error) {
+      if (String(error.message).includes('UNIQUE')) return json(res, 409, { error: 'That username already exists.' });
+      throw error;
+    }
+    if (password.password) {
+      const currentHash = sha256(parseCookies(req).oc_session ?? '');
+      if (existing.id === parent.id) {
+        db.prepare('DELETE FROM sessions WHERE parent_id = ? AND token_hash != ?').run(existing.id, currentHash);
+      } else {
+        db.prepare('DELETE FROM sessions WHERE parent_id = ?').run(existing.id);
+      }
+    }
+    audit(db, {
+      parentId: parent.id,
+      eventType: 'parent.updated',
+      summary: `${parent.display_name} updated parent ${displayName.displayName}.`,
+      details: { targetParentId: existing.id, passwordChanged: Boolean(password.password), pinChanged: Boolean(pin.pin) },
+    });
+    const current = db.prepare('SELECT id, username, display_name, created_at FROM parents WHERE id = ?').get(existing.id);
+    return json(res, 200, parentView(current, parent.id));
+  }
+
+  if (parentMatch && req.method === 'DELETE') {
+    const existing = db.prepare('SELECT * FROM parents WHERE id = ?').get(parentMatch[1]);
+    if (!existing) return json(res, 404, { error: 'Parent not found.' });
+    if (existing.id === parent.id) return json(res, 409, { error: 'Sign in as another parent before removing your own account.' });
+    const count = db.prepare('SELECT COUNT(*) AS count FROM parents').get().count;
+    if (count <= 1) return json(res, 409, { error: 'The last parent account cannot be removed.' });
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare('UPDATE enrollment_codes SET created_by = ? WHERE created_by = ?').run(parent.id, existing.id);
+      db.prepare('UPDATE overrides SET parent_id = NULL WHERE parent_id = ?').run(existing.id);
+      db.prepare('DELETE FROM parents WHERE id = ?').run(existing.id);
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+    audit(db, { parentId: parent.id, eventType: 'parent.removed', summary: `${parent.display_name} removed parent ${existing.display_name}.` });
+    return noContent(res);
   }
 
   if (req.method === 'GET' && path === '/api/services') {
@@ -808,6 +940,82 @@ async function handleApi(req, res, url) {
     return json(res, 201, { id, displayName, domain, configuredBlocked: true, blocked: true });
   }
 
+  const executablesMatch = path.match(/^\/api\/devices\/([^/]+)\/executables$/);
+  if (executablesMatch && req.method === 'POST') {
+    const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(executablesMatch[1]);
+    if (!device) return json(res, 404, { error: 'Device not found.' });
+    if (device.platform !== 'windows') return json(res, 409, { error: 'Executable paths can be added on Windows devices only.' });
+    const body = await bodyJson(req);
+    const executable = normalizeExecutablePath(body.path);
+    if (!executable) return json(res, 400, { error: 'Enter a local Windows .exe path such as C:\\Games\\App\\App.exe.' });
+    const displayName = String(body.displayName ?? '').trim() || executable.fileName.replace(/\.exe$/i, '');
+    if (displayName.length > 100) return json(res, 400, { error: 'Program name must be 100 characters or fewer.' });
+    const now = new Date().toISOString();
+    const existing = db.prepare('SELECT * FROM device_targets WHERE device_id = ? AND target_key = ?').get(device.id, executable.key);
+    if (existing) return json(res, 409, { error: 'That executable is already listed for this device.' });
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare(`
+        INSERT INTO device_targets
+          (device_id, target_key, display_name, target_kind, category_guess, mapping_json, source, currently_running, first_seen, last_seen)
+        VALUES (?, ?, ?, 'application', 'unknown', ?, 'parent-path', 0, ?, ?)
+      `).run(
+        device.id,
+        executable.key,
+        displayName,
+        JSON.stringify({ processes: [executable.fileName], paths: [executable.path] }),
+        now,
+        now,
+      );
+      insertOverride({
+        deviceId: device.id,
+        targetType: 'target',
+        targetId: executable.key,
+        action: 'block',
+        effectiveUntil: null,
+        source: 'dashboard',
+        parentId: parent.id,
+      });
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      if (String(error.message).includes('UNIQUE')) return json(res, 409, { error: 'That executable is already listed for this device.' });
+      throw error;
+    }
+    audit(db, {
+      parentId: parent.id,
+      deviceId: device.id,
+      eventType: 'executable.added',
+      summary: `${parent.display_name} added ${executable.fileName} to ${device.name}.`,
+      details: { key: executable.key, path: executable.path },
+    });
+    return json(res, 201, {
+      key: executable.key,
+      displayName,
+      path: executable.path,
+      configuredBlocked: true,
+      blocked: true,
+    });
+  }
+
+  const executableDeleteMatch = path.match(/^\/api\/devices\/([^/]+)\/executables\/([^/]+)$/);
+  if (executableDeleteMatch && req.method === 'DELETE') {
+    const target = db.prepare('SELECT * FROM device_targets WHERE device_id = ? AND target_key = ?')
+      .get(executableDeleteMatch[1], decodeURIComponent(executableDeleteMatch[2]));
+    if (!target || target.source !== 'parent-path') return json(res, 404, { error: 'Executable path not found.' });
+    db.prepare('DELETE FROM device_targets WHERE device_id = ? AND target_key = ?').run(target.device_id, target.target_key);
+    db.prepare("UPDATE overrides SET status = 'cancelled' WHERE device_id = ? AND target_type = 'target' AND target_id = ?")
+      .run(target.device_id, target.target_key);
+    incrementRevision(target.device_id);
+    audit(db, {
+      parentId: parent.id,
+      deviceId: target.device_id,
+      eventType: 'executable.removed',
+      summary: `${parent.display_name} removed ${target.display_name}.`,
+    });
+    return noContent(res);
+  }
+
   const websiteDeleteMatch = path.match(/^\/api\/devices\/([^/]+)\/websites\/([^/]+)$/);
   if (websiteDeleteMatch && req.method === 'DELETE') {
     const website = db.prepare('SELECT * FROM custom_websites WHERE device_id = ? AND id = ?').get(websiteDeleteMatch[1], websiteDeleteMatch[2]);
@@ -883,7 +1091,7 @@ const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, appBaseUrl);
     if (req.method === 'GET' && url.pathname === '/healthz') {
-      return json(res, 200, { ok: true, version: '0.3.4' });
+      return json(res, 200, { ok: true, version: '0.3.10' });
     }
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
     if (req.method === 'GET' && await serveStatic(res, url.pathname)) return;
@@ -897,5 +1105,5 @@ const server = createServer(async (req, res) => {
 
 db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(new Date().toISOString());
 server.listen(port, '0.0.0.0', () => {
-  console.log(`Operation Crackdown listening on port ${port}`);
+  console.log(`ParentGate listening on port ${port}`);
 });

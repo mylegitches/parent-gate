@@ -1,8 +1,8 @@
 services:
   dashboard:
     build: .
-    image: operation-crackdown:local
-    container_name: operation-crackdown
+    image: parentgate:local
+    container_name: parentgate
     restart: unless-stopped
     environment:
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:8080}
