@@ -154,6 +154,29 @@ function renderDevices() {
     $('.internet-paused', card).hidden = !internetBlocked;
     $('.internet-pause-form', card).hidden = internetBlocked || !supportsInternetPause;
     $('.internet-message', card).textContent = device.policy.internetMessage || 'Internet access is paused.';
+    const supportsScreenshot = device.platform === 'windows' && device.capabilities.includes('desktop-screenshot');
+    const screenshotPanel = $('.screenshot-panel', card);
+    screenshotPanel.hidden = device.platform !== 'windows';
+    const captureButton = $('[data-capture-screen]', card);
+    captureButton.disabled = !supportsScreenshot || Boolean(device.screenshot?.pending);
+    captureButton.textContent = device.screenshot?.pending ? 'Capturing…' : 'Capture screen';
+    captureButton.title = supportsScreenshot
+      ? (device.screenshot?.pending ? 'Waiting for this device to send the current desktop.' : 'Ask this device for a current desktop screenshot.')
+      : 'Update this device client before capturing the screen.';
+    const screenshotMeta = $('.screenshot-meta', card);
+    if (device.screenshot?.error) screenshotMeta.textContent = device.screenshot.error;
+    else if (device.screenshot?.pending) screenshotMeta.textContent = 'Waiting for the next check-in, usually a few seconds.';
+    else if (device.screenshot?.capturedAt) screenshotMeta.textContent = `Last captured ${new Date(device.screenshot.capturedAt).toLocaleString()}`;
+    else screenshotMeta.textContent = 'No screenshot yet.';
+    const preview = $('[data-open-screenshot]', card);
+    const thumb = $('.screenshot-thumb', card);
+    if (device.screenshot?.url) {
+      preview.hidden = false;
+      thumb.src = device.screenshot.url;
+    } else {
+      preview.hidden = true;
+      thumb.removeAttribute('src');
+    }
     $('.executables-panel', card).hidden = device.platform !== 'windows';
 
     const serviceList = $('.service-list', card);
@@ -439,11 +462,12 @@ $('#auth-form').addEventListener('submit', async (event) => {
 
 $('#devices').addEventListener('click', async (event) => {
   const card = event.target.closest('.device-card');
-  if (!card || !event.target.matches('button')) return;
-  event.target.disabled = true;
+  const button = event.target.closest('button');
+  if (!card || !button) return;
+  button.disabled = true;
   try {
-    if (event.target.dataset.masterAction) await applyOverride(card, 'master', 'blocking', event.target.dataset.masterAction);
-    if (event.target.hasAttribute('data-remove-device')) {
+    if (button.dataset.masterAction) await applyOverride(card, 'master', 'blocking', button.dataset.masterAction);
+    if (button.hasAttribute('data-remove-device')) {
       const name = $('.device-name', card).textContent;
       const confirmed = window.confirm(`Remove ${name} from the dashboard?\n\nThis revokes its enrollment but does not uninstall the local client. Run the client uninstaller on that device if it is still available.`);
       if (!confirmed) return;
@@ -451,7 +475,23 @@ $('#devices').addEventListener('click', async (event) => {
       showNotice(`${name} removed from the dashboard.`);
       await refreshAll();
     }
-    if (event.target.hasAttribute('data-internet-restore')) {
+    if (button.hasAttribute('data-capture-screen')) {
+      await api(`/api/devices/${encodeURIComponent(card.dataset.deviceId)}/screenshot`, { method: 'POST', body: {} });
+      showNotice('Screenshot requested. It should appear after the next device check-in.');
+      await refreshAll();
+    }
+    if (button.hasAttribute('data-open-screenshot')) {
+      const device = state.devices.find((item) => item.id === card.dataset.deviceId);
+      if (device?.screenshot?.url) {
+        $('#screenshot-title').textContent = device.name;
+        $('#screenshot-time').textContent = device.screenshot.capturedAt
+          ? `Captured ${new Date(device.screenshot.capturedAt).toLocaleString()}`
+          : '';
+        $('#screenshot-full').src = device.screenshot.url;
+        $('#screenshot-dialog').showModal();
+      }
+    }
+    if (button.hasAttribute('data-internet-restore')) {
       await api(`/api/devices/${encodeURIComponent(card.dataset.deviceId)}/override`, {
         method: 'PUT',
         body: { targetType: 'internet', targetId: 'access', action: 'allow' },
@@ -459,24 +499,24 @@ $('#devices').addEventListener('click', async (event) => {
       showNotice('Internet access restored.');
       await refreshAll();
     }
-    if (event.target.dataset.serviceAction) {
-      const service = event.target.closest('[data-service-id]').dataset.serviceId;
-      await applyOverride(card, 'service', service, event.target.dataset.serviceAction);
+    if (button.dataset.serviceAction) {
+      const service = button.closest('[data-service-id]').dataset.serviceId;
+      await applyOverride(card, 'service', service, button.dataset.serviceAction);
     }
-    if (event.target.dataset.websiteAction) {
-      const website = event.target.closest('[data-website-id]').dataset.websiteId;
-      await applyOverride(card, 'website', website, event.target.dataset.websiteAction);
+    if (button.dataset.websiteAction) {
+      const website = button.closest('[data-website-id]').dataset.websiteId;
+      await applyOverride(card, 'website', website, button.dataset.websiteAction);
     }
-    if (event.target.dataset.targetAction) {
-      const target = event.target.closest('[data-target-key]').dataset.targetKey;
-      await applyOverride(card, 'target', target, event.target.dataset.targetAction);
+    if (button.dataset.targetAction) {
+      const target = button.closest('[data-target-key]').dataset.targetKey;
+      await applyOverride(card, 'target', target, button.dataset.targetAction);
     }
-    if (event.target.hasAttribute('data-activity-block')) {
-      const target = event.target.closest('[data-target-key]').dataset.targetKey;
+    if (button.hasAttribute('data-activity-block')) {
+      const target = button.closest('[data-target-key]').dataset.targetKey;
       await applyOverride(card, 'target', target, 'block');
     }
-    if (event.target.hasAttribute('data-website-activity-block')) {
-      const domain = event.target.closest('[data-domain]').dataset.domain;
+    if (button.hasAttribute('data-website-activity-block')) {
+      const domain = button.closest('[data-domain]').dataset.domain;
       await api(`/api/devices/${encodeURIComponent(card.dataset.deviceId)}/websites`, {
         method: 'POST',
         body: { url: domain, displayName: domain },
@@ -484,21 +524,21 @@ $('#devices').addEventListener('click', async (event) => {
       showNotice(`${domain} added to the block list.`);
       await refreshAll();
     }
-    if (event.target.dataset.activityFilter) {
-      const selected = event.target.dataset.activityFilter;
-      for (const button of $$('[data-activity-filter]', card)) button.classList.toggle('active', button === event.target);
+    if (button.dataset.activityFilter) {
+      const selected = button.dataset.activityFilter;
+      for (const filterButton of $$('[data-activity-filter]', card)) filterButton.classList.toggle('active', filterButton === button);
       for (const group of $$('[data-activity-group]', card)) {
         group.hidden = selected !== 'all' && group.dataset.activityGroup !== selected;
       }
     }
-    if (event.target.hasAttribute('data-delete-website')) {
-      const website = event.target.closest('[data-website-id]').dataset.websiteId;
+    if (button.hasAttribute('data-delete-website')) {
+      const website = button.closest('[data-website-id]').dataset.websiteId;
       await api(`/api/devices/${encodeURIComponent(card.dataset.deviceId)}/websites/${encodeURIComponent(website)}`, { method: 'DELETE' });
       showNotice('Website removed.');
       await refreshAll();
     }
-    if (event.target.hasAttribute('data-delete-executable')) {
-      const target = event.target.closest('[data-target-key]').dataset.targetKey;
+    if (button.hasAttribute('data-delete-executable')) {
+      const target = button.closest('[data-target-key]').dataset.targetKey;
       await api(`/api/devices/${encodeURIComponent(card.dataset.deviceId)}/executables/${encodeURIComponent(target)}`, { method: 'DELETE' });
       showNotice('Program path removed.');
       await refreshAll();
@@ -506,7 +546,13 @@ $('#devices').addEventListener('click', async (event) => {
   } catch (error) {
     showNotice(error.message, true);
   } finally {
-    event.target.disabled = false;
+    if (button.hasAttribute('data-capture-screen')) {
+      const device = state.devices.find((item) => item.id === card.dataset.deviceId);
+      button.disabled = Boolean(device?.screenshot?.pending)
+        || !(device?.platform === 'windows' && device?.capabilities?.includes('desktop-screenshot'));
+    } else {
+      button.disabled = false;
+    }
   }
 });
 

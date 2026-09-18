@@ -66,7 +66,7 @@ test('setup, enrollment, direct controls, custom websites, and policy form one w
     const clientHeaders = { Authorization: `Bearer ${enrollment.credential}`, 'Content-Type': 'application/json' };
 
     const update = await responseJson(await fetch(`${baseUrl}/api/client/v1/update`, { headers: clientHeaders }));
-    assert.equal(update.version, '0.3.7');
+    assert.equal(update.version, '0.3.11');
     assert.deepEqual(update.files.map((file) => file.name), ['ParentGate.ps1', 'ShowInternetNotice.ps1', 'ApplyUpdate.ps1']);
     const updateCanonical = [update.version, ...update.files.map((file) => `${file.name}|${file.sha256}|${file.url}`)].join('\n');
     const updateKey = createHash('sha256').update(enrollment.credential, 'utf8').digest();
@@ -145,8 +145,8 @@ test('setup, enrollment, direct controls, custom websites, and policy form one w
       headers: clientHeaders,
       body: JSON.stringify({
         appliedRevision: 0,
-        clientVersion: '0.3.7',
-        capabilities: ['target-scan', 'internet-pause-message', 'self-update'],
+        clientVersion: '0.3.11',
+        capabilities: ['target-scan', 'internet-pause-message', 'self-update', 'desktop-screenshot'],
         status: { state: 'applied' },
       }),
     });
@@ -183,13 +183,42 @@ test('setup, enrollment, direct controls, custom websites, and policy form one w
     assert.deepEqual(addedExe.mapping.processes, ['RobloxPlayerBeta.exe']);
     assert.equal(policy.pinVerifiers.length, 1);
     const dashboardDevices = await responseJson(await fetch(`${baseUrl}/api/devices`, { headers: parentHeaders }));
-    assert.equal(dashboardDevices.devices[0].clientVersion, '0.3.7');
-    assert.equal(dashboardDevices.devices[0].latestClientVersion, '0.3.7');
+    assert.equal(dashboardDevices.devices[0].clientVersion, '0.3.11');
+    assert.equal(dashboardDevices.devices[0].latestClientVersion, '0.3.11');
     assert.equal(dashboardDevices.devices[0].updateAvailable, false);
     assert.equal(dashboardDevices.devices[0].applicationActivity.length, 2);
     assert.equal(dashboardDevices.devices[0].applicationActivity[0].eventType, 'stopped');
     assert.equal(dashboardDevices.devices[0].websiteActivity.length, 1);
     assert.equal(dashboardDevices.devices[0].websiteActivity[0].domain, 'messages.google.com');
+
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9, 0x00, 0x00]);
+    const beforeCapture = await fetch(`${baseUrl}/api/devices/${enrollment.deviceId}/screenshot`, {
+      method: 'POST',
+      headers: parentHeaders,
+      body: '{}',
+    });
+    assert.equal(beforeCapture.status, 202);
+    const requested = await responseJson(beforeCapture);
+    assert.equal(requested.screenshot.pending, true);
+    const requestedPolicy = await responseJson(await fetch(`${baseUrl}/api/client/v1/policy`, { headers: clientHeaders }));
+    assert.equal(Boolean(requestedPolicy.screenshotRequestId), true);
+    const uploaded = await fetch(`${baseUrl}/api/client/v1/screenshot`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${enrollment.credential}`,
+        'X-Screenshot-Request-Id': requestedPolicy.screenshotRequestId,
+        'Content-Type': 'image/jpeg',
+      },
+      body: jpeg,
+    });
+    assert.equal(uploaded.status, 204);
+    const afterCapture = await responseJson(await fetch(`${baseUrl}/api/devices`, { headers: parentHeaders }));
+    assert.equal(afterCapture.devices[0].screenshot.pending, false);
+    assert.equal(Boolean(afterCapture.devices[0].screenshot.capturedAt), true);
+    const image = await fetch(`${baseUrl}${afterCapture.devices[0].screenshot.url}`, { headers: parentHeaders });
+    assert.equal(image.status, 200);
+    assert.equal(image.headers.get('content-type'), 'image/jpeg');
+    assert.deepEqual(Buffer.from(await image.arrayBuffer()), jpeg);
 
     const operationId = crypto.randomUUID();
     const localOperation = {

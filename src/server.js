@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +25,8 @@ const sessionDays = Math.max(1, Number(process.env.SESSION_DAYS ?? 14));
 const householdTimezone = process.env.HOUSEHOLD_TIMEZONE ?? 'America/Chicago';
 const appBaseUrl = process.env.APP_BASE_URL || `http://localhost:${port}`;
 const db = openDatabase(dataDir);
+const screenshotDir = join(dataDir, 'screenshots');
+await mkdir(screenshotDir, { recursive: true });
 const loginAttempts = new Map();
 const windowsUpdateDefinition = JSON.parse(await readFile(join(windowsClientDir, 'update.json'), 'utf8'));
 const windowsUpdateFiles = new Map(await Promise.all(windowsUpdateDefinition.files.map(async (name) => {
@@ -69,16 +71,36 @@ function noContent(res, headers = {}) {
   res.end();
 }
 
-async function bodyJson(req) {
+async function bodyBytes(req, maxBytes = 1024 * 1024) {
   const chunks = [];
   let length = 0;
   for await (const chunk of req) {
     length += chunk.length;
-    if (length > 1024 * 1024) throw new Error('Request body is too large.');
+    if (length > maxBytes) throw new Error('Request body is too large.');
     chunks.push(chunk);
   }
-  if (length === 0) return {};
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  return Buffer.concat(chunks);
+}
+
+async function bodyJson(req, maxBytes = 1024 * 1024) {
+  const raw = await bodyBytes(req, maxBytes);
+  if (raw.length === 0) return {};
+  return JSON.parse(raw.toString('utf8'));
+}
+
+function screenshotPath(deviceId) {
+  return join(screenshotDir, `${deviceId}.jpg`);
+}
+
+function screenshotView(device) {
+  const pending = Boolean(device.screenshot_request_id);
+  const capturedAt = device.screenshot_captured_at || null;
+  return {
+    pending,
+    capturedAt,
+    error: device.screenshot_error || null,
+    url: capturedAt ? `/api/devices/${device.id}/screenshot?t=${encodeURIComponent(capturedAt)}` : null,
+  };
 }
 
 function parseCookies(req) {
@@ -205,6 +227,7 @@ function deviceView(device) {
     availableTargets,
     applicationActivity,
     websiteActivity,
+    screenshot: screenshotView(device),
   };
 }
 
@@ -285,7 +308,12 @@ function resolveClientPolicy(device) {
     SELECT id AS parentKeyId, display_name AS displayName, pin_hash AS verifier
     FROM parents ORDER BY created_at
   `).all();
-  return { ...resolvePolicy(db, device), deviceId: device.id, pinVerifiers };
+  return {
+    ...resolvePolicy(db, device),
+    deviceId: device.id,
+    pinVerifiers,
+    screenshotRequestId: device.screenshot_request_id || null,
+  };
 }
 
 function insertOverride({ deviceId, targetType, targetId, action, effectiveUntil, source, parentId, baseRevision = null, operationId = null, message = null }) {
@@ -519,6 +547,39 @@ async function handleApi(req, res, url) {
         Array.isArray(body.capabilities) ? JSON.stringify(body.capabilities) : null,
         device.id,
       );
+      return noContent(res);
+    }
+
+    if (req.method === 'POST' && path === '/api/client/v1/screenshot') {
+      const requestId = String(req.headers['x-screenshot-request-id'] ?? '').trim();
+      const contentType = String(req.headers['content-type'] ?? '');
+      const nowIso = new Date().toISOString();
+      if (!device.screenshot_request_id) return json(res, 409, { error: 'No screenshot is currently requested.' });
+      if (requestId && requestId !== device.screenshot_request_id) {
+        return json(res, 409, { error: 'This screenshot request is no longer current.' });
+      }
+      if (contentType.includes('application/json')) {
+        const body = await bodyJson(req);
+        const headerId = requestId || String(body.requestId ?? '').trim();
+        if (headerId !== device.screenshot_request_id) {
+          return json(res, 409, { error: 'This screenshot request is no longer current.' });
+        }
+        const error = String(body.error ?? 'Screenshot capture failed.').slice(0, 240);
+        db.prepare('UPDATE devices SET last_seen = ?, screenshot_request_id = NULL, screenshot_error = ? WHERE id = ?').run(nowIso, error, device.id);
+        audit(db, { deviceId: device.id, eventType: 'screenshot.failed', summary: `${device.name} could not capture the desktop.`, details: { error } });
+        return noContent(res);
+      }
+      const bytes = await bodyBytes(req, 8 * 1024 * 1024);
+      if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) {
+        return json(res, 400, { error: 'A JPEG screenshot is required.' });
+      }
+      await writeFile(screenshotPath(device.id), bytes);
+      db.prepare(`
+        UPDATE devices
+        SET last_seen = ?, screenshot_request_id = NULL, screenshot_captured_at = ?, screenshot_error = NULL
+        WHERE id = ?
+      `).run(nowIso, nowIso, device.id);
+      audit(db, { deviceId: device.id, eventType: 'screenshot.captured', summary: `${device.name} sent a desktop screenshot.` });
       return noContent(res);
     }
 
@@ -866,7 +927,36 @@ async function handleApi(req, res, url) {
       db.exec('ROLLBACK');
       throw error;
     }
+    try { await unlink(screenshotPath(device.id)); } catch { /* no screenshot stored */ }
     return noContent(res);
+  }
+
+  const screenshotMatch = path.match(/^\/api\/devices\/([^/]+)\/screenshot$/);
+  if (screenshotMatch && req.method === 'POST') {
+    const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(screenshotMatch[1]);
+    if (!device) return json(res, 404, { error: 'Device not found.' });
+    if (device.platform !== 'windows') return json(res, 409, { error: 'Desktop screenshots are available on Windows devices.' });
+    if (!safeJson(device.capabilities_json, []).includes('desktop-screenshot')) {
+      return json(res, 409, { error: 'Update this device client before capturing the screen.' });
+    }
+    const requestId = randomUUID();
+    db.prepare('UPDATE devices SET screenshot_request_id = ?, screenshot_error = NULL WHERE id = ?').run(requestId, device.id);
+    audit(db, { parentId: parent.id, deviceId: device.id, eventType: 'screenshot.requested', summary: `${parent.display_name} requested a desktop screenshot of ${device.name}.` });
+    return json(res, 202, deviceView(db.prepare('SELECT * FROM devices WHERE id = ?').get(device.id)));
+  }
+  if (screenshotMatch && req.method === 'GET') {
+    const device = db.prepare('SELECT * FROM devices WHERE id = ?').get(screenshotMatch[1]);
+    if (!device) return json(res, 404, { error: 'Device not found.' });
+    const filePath = screenshotPath(device.id);
+    if (!device.screenshot_captured_at || !existsSync(filePath)) return json(res, 404, { error: 'No screenshot is available yet.' });
+    const content = await readFile(filePath);
+    res.writeHead(200, securityHeaders({
+      'Content-Type': 'image/jpeg',
+      'Content-Length': content.length,
+      'Cache-Control': 'no-store',
+    }));
+    res.end(content);
+    return;
   }
 
   const overrideMatch = path.match(/^\/api\/devices\/([^/]+)\/override$/);
@@ -1091,7 +1181,7 @@ const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, appBaseUrl);
     if (req.method === 'GET' && url.pathname === '/healthz') {
-      return json(res, 200, { ok: true, version: '0.3.10' });
+      return json(res, 200, { ok: true, version: '0.3.11' });
     }
     if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
     if (req.method === 'GET' && await serveStatic(res, url.pathname)) return;

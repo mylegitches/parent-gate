@@ -8,7 +8,7 @@
   <link rel="icon" href="/favicon.ico" sizes="any">
   <link rel="icon" type="image/png" href="/favicon-32.png" sizes="32x32">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-  <link rel="stylesheet" href="/styles.css?v=0.3.10">
+  <link rel="stylesheet" href="/styles.css?v=0.3.11">
 </head>
 <body>
   <main class="shell">
@@ -98,6 +98,16 @@
     </form>
   </dialog>
 
+  <dialog id="screenshot-dialog">
+    <form method="dialog" class="dialog-card screenshot-dialog">
+      <button class="dialog-close" value="cancel" aria-label="Close">×</button>
+      <p class="eyebrow">DESKTOP</p>
+      <h2 id="screenshot-title">Current screen</h2>
+      <p id="screenshot-time" class="muted"></p>
+      <img id="screenshot-full" alt="Desktop screenshot">
+    </form>
+  </dialog>
+
   <template id="device-template">
     <article class="device-card">
       <header class="device-header">
@@ -127,6 +137,17 @@
           <button class="danger" type="submit">Pause internet and show message</button>
         </form>
         <p class="muted master-help">The client keeps its private dashboard connection so Restore internet still works.</p>
+      </section>
+
+      <section class="screenshot-panel">
+        <div class="section-heading">
+          <div><p class="eyebrow">DESKTOP</p><h3>Current screen</h3></div>
+          <button class="small secondary" data-capture-screen>Capture screen</button>
+        </div>
+        <p class="screenshot-meta muted"></p>
+        <button type="button" class="screenshot-preview" data-open-screenshot hidden>
+          <img class="screenshot-thumb" alt="Latest desktop">
+        </button>
       </section>
 
       <div class="controls-block">
@@ -201,6 +222,6 @@
     </article>
   </template>
 
-  <script type="module" src="/app.js?v=0.3.10"></script>
+  <script type="module" src="/app.js?v=0.3.11"></script>
 </body>
 </html>

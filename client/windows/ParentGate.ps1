@@ -10,7 +10,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$script:ClientVersion = '0.3.7'
+$script:ClientVersion = '0.3.11'
 $script:ConfigPath = Join-Path $DataDirectory 'config.json'
 $script:PolicyPath = Join-Path $DataDirectory 'policy.json'
 $script:StatusPath = Join-Path $DataDirectory 'status.json'
@@ -34,6 +34,7 @@ $script:InternetPauseKnownDisabled = $false
 $script:ObservedApplications = @{}
 $script:ApplicationMonitorInitialized = $false
 $script:UpdateStatus = 'current'
+$script:LastScreenshotRequestId = $null
 
 function Test-IsAdministrator {
     $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -224,7 +225,7 @@ function Invoke-Enrollment {
         platform = 'windows'
         osVersion = [Environment]::OSVersion.VersionString
         clientVersion = $script:ClientVersion
-        capabilities = @('process-enforcement', 'hosts-enforcement', 'target-scan', 'local-pin', 'internet-pause-message', 'self-update')
+        capabilities = @('process-enforcement', 'hosts-enforcement', 'target-scan', 'local-pin', 'internet-pause-message', 'self-update', 'desktop-screenshot')
     }
     $response = Invoke-RestMethod -Uri "$($ServerUrl.TrimEnd('/'))/api/client/v1/enroll" -Method Post -ContentType 'application/json' -Body ($body | ConvertTo-Json -Depth 5) -TimeoutSec 20
     $config = @{
@@ -774,6 +775,89 @@ function Apply-Policy {
     return $status
 }
 
+function Capture-DesktopJpeg {
+    param([string]$Path)
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    $bounds = [Windows.Forms.SystemInformation]::VirtualScreen
+    if ($bounds.Width -lt 1 -or $bounds.Height -lt 1) { throw 'The desktop size could not be read.' }
+    $bitmap = New-Object Drawing.Bitmap $bounds.Width, $bounds.Height
+    $graphics = [Drawing.Graphics]::FromImage($bitmap)
+    try {
+        $graphics.CopyFromScreen($bounds.Location, [Drawing.Point]::Empty, $bounds.Size)
+    }
+    finally { $graphics.Dispose() }
+    $output = $bitmap
+    $maxWidth = 1920
+    if ($bitmap.Width -gt $maxWidth) {
+        $height = [Math]::Max(1, [int]($bitmap.Height * ($maxWidth / $bitmap.Width)))
+        $output = New-Object Drawing.Bitmap $maxWidth, $height
+        $scale = [Drawing.Graphics]::FromImage($output)
+        try {
+            $scale.InterpolationMode = [Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+            $scale.DrawImage($bitmap, 0, 0, $maxWidth, $height)
+        }
+        finally { $scale.Dispose() }
+        $bitmap.Dispose()
+    }
+    try {
+        $codec = [Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' }
+        $parameters = New-Object Drawing.Imaging.EncoderParameters 1
+        $parameters.Param[0] = New-Object Drawing.Imaging.EncoderParameter ([Drawing.Imaging.Encoder]::Quality, [long]70)
+        $output.Save($Path, $codec, $parameters)
+    }
+    finally { $output.Dispose() }
+}
+
+function Send-ScreenshotResult {
+    param(
+        [string]$RequestId,
+        [string]$Path = $null,
+        [string]$ErrorMessage = $null
+    )
+    $headers = @{
+        Authorization = "Bearer $script:Credential"
+        'X-Screenshot-Request-Id' = $RequestId
+    }
+    $parameters = @{
+        Uri = "$($script:Config.serverUrl.TrimEnd('/'))/api/client/v1/screenshot"
+        Method = 'POST'
+        Headers = $headers
+        UseBasicParsing = $true
+        TimeoutSec = 30
+    }
+    if ($ErrorMessage) {
+        $parameters.ContentType = 'application/json'
+        $parameters.Body = (@{ requestId = $RequestId; error = $ErrorMessage } | ConvertTo-Json -Compress)
+    }
+    else {
+        $parameters.ContentType = 'image/jpeg'
+        $parameters.InFile = $Path
+    }
+    Invoke-WebRequest @parameters | Out-Null
+}
+
+function Sync-DesktopScreenshot {
+    param($Policy)
+    $requestId = [string]$Policy.screenshotRequestId
+    if ([string]::IsNullOrWhiteSpace($requestId) -or $requestId -eq $script:LastScreenshotRequestId) { return }
+    $path = Join-Path $DataDirectory 'latest-screenshot.jpg'
+    try {
+        Capture-DesktopJpeg -Path $path
+        Send-ScreenshotResult -RequestId $requestId -Path $path
+        $script:LastScreenshotRequestId = $requestId
+    }
+    catch {
+        $message = $_.Exception.Message
+        try { Send-ScreenshotResult -RequestId $requestId -ErrorMessage $message } catch { }
+        $script:LastScreenshotRequestId = $requestId
+        $script:LastError = "Screenshot upload failed: $message"
+    }
+    finally {
+        Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Send-Status {
     param($Policy, $Status)
     try {
@@ -781,7 +865,7 @@ function Send-Status {
             appliedRevision = [int]$Policy.revision
             clientVersion = $script:ClientVersion
             osVersion = [Environment]::OSVersion.VersionString
-            capabilities = @('process-enforcement', 'hosts-enforcement', 'target-scan', 'local-pin', 'internet-pause-message', 'self-update')
+            capabilities = @('process-enforcement', 'hosts-enforcement', 'target-scan', 'local-pin', 'internet-pause-message', 'self-update', 'desktop-screenshot')
             status = $Status
         } | Out-Null
     }
@@ -1168,6 +1252,9 @@ function Start-Agent {
                         Send-Status $script:LatestPolicy $status
                     }
                     if ($synced) { $script:LastError = $null }
+                    if ($synced -and $script:LatestPolicy) {
+                        try { Sync-DesktopScreenshot $script:LatestPolicy } catch { $script:LastError = "Screenshot capture failed: $($_.Exception.Message)" }
+                    }
                 }
                 catch { $script:LastError = "Dashboard sync failed: $($_.Exception.Message)" }
                 $pollSeconds = if ($script:LatestPolicy -and [bool]$script:LatestPolicy.internetBlocked) { 2 } else { 8 }

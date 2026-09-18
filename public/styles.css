@@ -73,7 +73,12 @@ input, select, textarea { width: 100%; border: 1px solid #cbd2df; border-radius:
 .policy-status { font-size: .78rem; padding: 6px 9px; border-radius: 999px; background: #f2f4f7; color: var(--muted); white-space: nowrap; }
 .policy-status.pending { color: var(--amber); background: #fff5e8; }
 .controls-block, .device-card > section, .targets-panel, .activity-panel { margin-top: 18px; }
-.internet-panel { border: 1px solid var(--line); border-radius: 14px; padding: 16px; background: #fbfcfe; }
+.screenshot-panel { margin-top: 18px; }
+.screenshot-preview { display: block; width: 100%; padding: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #0b1220; }
+.screenshot-thumb, #screenshot-full { display: block; width: 100%; height: auto; }
+.screenshot-meta { font-size: .82rem; margin: 8px 0 10px; }
+#screenshot-dialog { width: min(920px, calc(100% - 28px)); }
+#screenshot-full { border-radius: 12px; background: #0b1220; }
 .internet-heading { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
 .internet-heading h3 { margin: 0; }
 .internet-state { font-size: .78rem; font-weight: 750; padding: 6px 9px; border-radius: 999px; background: #ecfdf3; color: #027a48; }

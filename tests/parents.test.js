@@ -46,7 +46,7 @@ test('parents can be listed, added, edited, and removed', { timeout: 30000 }, as
   try {
     await waitForServer(baseUrl, child);
     const healthz = await responseJson(await fetch(`${baseUrl}/healthz`));
-    assert.equal(healthz.version, '0.3.10');
+    assert.equal(healthz.version, '0.3.11');
 
     const setupResponse = await fetch(`${baseUrl}/api/setup`, {
       method: 'POST',

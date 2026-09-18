@@ -158,6 +158,11 @@ function migrate(db) {
 
   const overrideColumns = new Set(db.prepare('PRAGMA table_info(overrides)').all().map((column) => column.name));
   if (!overrideColumns.has('message')) db.exec('ALTER TABLE overrides ADD COLUMN message TEXT');
+
+  const deviceColumns = new Set(db.prepare('PRAGMA table_info(devices)').all().map((column) => column.name));
+  if (!deviceColumns.has('screenshot_request_id')) db.exec('ALTER TABLE devices ADD COLUMN screenshot_request_id TEXT');
+  if (!deviceColumns.has('screenshot_captured_at')) db.exec('ALTER TABLE devices ADD COLUMN screenshot_captured_at TEXT');
+  if (!deviceColumns.has('screenshot_error')) db.exec('ALTER TABLE devices ADD COLUMN screenshot_error TEXT');
 }
 
 function seedCatalog(db) {

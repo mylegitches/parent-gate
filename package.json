@@ -1,6 +1,6 @@
 {
   "name": "parentgate",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "private": true,
   "description": "Household focus dashboard and device policy service",
   "type": "module",
