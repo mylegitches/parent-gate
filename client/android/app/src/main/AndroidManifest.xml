@@ -14,7 +14,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="Operation Crackdown"
+        android:label="ParentGate"
         android:usesCleartextTraffic="false"
         android:theme="@style/AppTheme">
         <activity

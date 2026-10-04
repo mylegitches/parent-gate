@@ -50,7 +50,7 @@ final class PolicyStore: ObservableObject {
     private func updateInternetNotice(_ policy: ClientPolicy) {
         let center = UNUserNotificationCenter.current()
         guard policy.internetBlocked == true else {
-            center.removeDeliveredNotifications(withIdentifiers: ["operation-crackdown-internet"])
+            center.removeDeliveredNotifications(withIdentifiers: ["parentgate-internet"])
             UserDefaults.standard.removeObject(forKey: "lastInternetNoticeId")
             return
         }
@@ -61,7 +61,7 @@ final class PolicyStore: ObservableObject {
         content.title = "Internet access is paused"
         content.body = policy.internetMessage ?? "Internet access is paused."
         content.sound = .default
-        center.add(UNNotificationRequest(identifier: "operation-crackdown-internet", content: content, trigger: nil))
+        center.add(UNNotificationRequest(identifier: "parentgate-internet", content: content, trigger: nil))
     }
 
     func override(targetType: String, targetId: String, action: String) async {

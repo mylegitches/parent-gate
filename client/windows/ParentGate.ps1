@@ -361,7 +361,7 @@ function Get-BlockedExecutables {
 
 function Test-ProtectedProcess {
     param($Process)
-    $protectedNames = @('csrss', 'smss', 'wininit', 'services', 'lsass', 'svchost', 'explorer', 'powershell', 'pwsh', 'conhost', 'operationcrackdown')
+    $protectedNames = @('csrss', 'smss', 'wininit', 'services', 'lsass', 'svchost', 'explorer', 'powershell', 'pwsh', 'conhost', 'parentgate')
     if ($Process.Id -eq $PID) { return $true }
     if ($Process.ProcessName -in $protectedNames) { return $true }
     try {
@@ -873,7 +873,7 @@ function Send-Status {
 }
 
 function Get-VisibleApplications {
-    $excluded = @('explorer', 'taskmgr', 'powershell', 'pwsh', 'conhost', 'textinputhost', 'searchhost', 'shellexperiencehost', 'systemsettings', 'operationcrackdown')
+    $excluded = @('explorer', 'taskmgr', 'powershell', 'pwsh', 'conhost', 'textinputhost', 'searchhost', 'shellexperiencehost', 'systemsettings', 'parentgate')
     $communicationPattern = '(?i)discord|slack|teams|zoom|skype|telegram|signal|whatsapp|messenger|webex|wechat|line'
     $streamingPattern = '(?i)netflix|hulu|paramount|discovery|youtube|twitch|spotify|plex|primevideo|disney'
     $gamingPattern = '(?i)roblox|minecraft|fortnite|steam|epicgames|riotclient|league of legends|valorant'

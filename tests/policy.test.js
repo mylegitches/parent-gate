@@ -7,7 +7,7 @@ import { openDatabase } from '../src/db.js';
 import { resolvePolicy } from '../src/policy.js';
 
 function fixture() {
-  const directory = mkdtempSync(join(tmpdir(), 'crackdown-policy-'));
+  const directory = mkdtempSync(join(tmpdir(), 'parentgate-policy-'));
   const db = openDatabase(directory);
   const device = { id: 'device-1', name: 'Test PC', platform: 'windows', desired_revision: 1 };
   db.prepare(`INSERT INTO devices (id, name, platform, credential_hash, created_at) VALUES (?, ?, ?, ?, ?)`)

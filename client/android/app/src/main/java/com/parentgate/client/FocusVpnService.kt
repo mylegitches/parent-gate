@@ -1,4 +1,4 @@
-package com.operationcrackdown.client
+package com.parentgate.client
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -26,13 +26,13 @@ class FocusVpnService : VpnService() {
         val activityIntent = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
         val notification = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_lock_lock)
-            .setContentTitle("Operation Crackdown")
+            .setContentTitle("ParentGate")
             .setContentText("Focus controls are active")
             .setOngoing(true)
             .setContentIntent(activityIntent)
             .build()
         startForeground(NOTIFICATION_ID, notification)
-        if (running.compareAndSet(false, true)) Thread(::policyLoop, "crackdown-policy").start()
+        if (running.compareAndSet(false, true)) Thread(::policyLoop, "parentgate-policy").start()
         return START_STICKY
     }
 
@@ -79,7 +79,7 @@ class FocusVpnService : VpnService() {
         appliedInternetBlocked = internetBlocked
         if (packages.isEmpty() && !internetBlocked) return
         val builder = Builder()
-            .setSession("Operation Crackdown focus filter")
+            .setSession("ParentGate focus filter")
             .setMtu(1500)
             .addAddress("10.254.0.1", 32)
             .addRoute("0.0.0.0", 0)
@@ -105,7 +105,7 @@ class FocusVpnService : VpnService() {
                     while (running.get() && input.read(buffer) >= 0) { /* intentionally discard */ }
                 }
             } catch (_: Exception) { }
-        }, "crackdown-packet-dropper").also { it.start() }
+        }, "parentgate-packet-dropper").also { it.start() }
     }
 
     private fun updateInternetNotice(policy: JSONObject) {
@@ -177,9 +177,9 @@ class FocusVpnService : VpnService() {
     }
 
     companion object {
-        private const val CHANNEL_ID = "operation-crackdown-client"
+        private const val CHANNEL_ID = "parentgate-client"
         private const val NOTIFICATION_ID = 1782
         private const val INTERNET_NOTICE_ID = 1783
-        private const val MESSAGE_CHANNEL_ID = "operation-crackdown-parent-messages"
+        private const val MESSAGE_CHANNEL_ID = "parentgate-parent-messages"
     }
 }

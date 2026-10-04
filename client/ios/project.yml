@@ -1,6 +1,6 @@
-name: OperationCrackdown
+name: ParentGate
 options:
-  bundleIdPrefix: com.operationcrackdown
+  bundleIdPrefix: com.parentgate
   deploymentTarget:
     iOS: "17.0"
 settings:
@@ -9,16 +9,16 @@ settings:
     SWIFT_STRICT_CONCURRENCY: minimal
     DEVELOPMENT_TEAM: ""
 targets:
-  OperationCrackdown:
+  ParentGate:
     type: application
     platform: iOS
     sources:
-      - path: OperationCrackdown
+      - path: ParentGate
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.operationcrackdown.client
-        CODE_SIGN_ENTITLEMENTS: OperationCrackdown/OperationCrackdown.entitlements
-        INFOPLIST_KEY_CFBundleDisplayName: Operation Crackdown
+        PRODUCT_BUNDLE_IDENTIFIER: com.parentgate.client
+        CODE_SIGN_ENTITLEMENTS: ParentGate/ParentGate.entitlements
+        INFOPLIST_KEY_CFBundleDisplayName: ParentGate
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: true
         INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: true
         INFOPLIST_KEY_UILaunchScreen_Generation: true
@@ -31,7 +31,7 @@ targets:
       - path: DeviceActivityMonitor
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.operationcrackdown.client.monitor
+        PRODUCT_BUNDLE_IDENTIFIER: com.parentgate.client.monitor
         CODE_SIGN_ENTITLEMENTS: DeviceActivityMonitor/DeviceActivityMonitor.entitlements
         INFOPLIST_KEY_NSExtension_NSExtensionPointIdentifier: com.apple.deviceactivity.monitor-extension
         INFOPLIST_KEY_NSExtension_NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).MonitorExtension

@@ -3,6 +3,6 @@
 <plist version="1.0"><dict>
     <key>com.apple.developer.family-controls</key><true/>
     <key>com.apple.security.application-groups</key>
-    <array><string>group.com.operationcrackdown.client</string></array>
+    <array><string>group.com.parentgate.client</string></array>
 </dict></plist>
 

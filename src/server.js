@@ -287,7 +287,7 @@ function normalizeExecutablePath(value) {
     lower.startsWith('c:\\windows\\')
     || lower.includes('\\windows\\system32\\')
     || lower.includes('\\windows\\syswow64\\')
-    || lower.includes('\\operationcrackdown\\')
+    || lower.includes('\\parentgate\\')
     || ['powershell.exe', 'pwsh.exe', 'cmd.exe', 'conhost.exe'].includes(fileName.toLowerCase())
   ) {
     return null;

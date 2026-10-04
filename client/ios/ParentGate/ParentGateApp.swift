@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct OperationCrackdownApp: App {
+struct ParentGateApp: App {
     @StateObject private var store = PolicyStore()
 
     var body: some Scene {

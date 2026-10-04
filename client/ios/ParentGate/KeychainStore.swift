@@ -6,7 +6,7 @@ enum KeychainStore {
         let data = Data(value.utf8)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "OperationCrackdown",
+            kSecAttrService as String: "ParentGate",
             kSecAttrAccount as String: account,
         ]
         SecItemDelete(query as CFDictionary)
@@ -20,7 +20,7 @@ enum KeychainStore {
     static func read(account: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "OperationCrackdown",
+            kSecAttrService as String: "ParentGate",
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,

@@ -35,7 +35,7 @@ function parentHeaders(session) {
 }
 
 test('parents can be listed, added, edited, and removed', { timeout: 30000 }, async () => {
-  const dataDirectory = mkdtempSync(join(tmpdir(), 'crackdown-parents-'));
+  const dataDirectory = mkdtempSync(join(tmpdir(), 'parentgate-parents-'));
   const port = 19180 + Math.floor(Math.random() * 800);
   const baseUrl = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, ['src/server.js'], {

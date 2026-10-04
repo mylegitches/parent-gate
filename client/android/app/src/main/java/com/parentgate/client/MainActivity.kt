@@ -1,4 +1,4 @@
-package com.operationcrackdown.client
+package com.parentgate.client
 
 import android.Manifest
 import android.app.Activity
@@ -31,7 +31,7 @@ class MainActivity : Activity() {
 
     private fun render() {
         content.removeAllViews()
-        heading("Operation Crackdown")
+        heading("ParentGate")
         if (!api.enrolled) renderEnrollment() else renderParentOverride()
     }
 

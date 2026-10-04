@@ -29,7 +29,7 @@ From the repository directory on the NAS:
 docker compose up -d --build
 ```
 
-The application listens on port `8901` inside the container and publishes it as port `8901` on the NAS. Other containers on the shared proxy network can reach it as `operation-crackdown:8901`; it is also reachable directly as `http://NAS-IP:8901` for local troubleshooting.
+The application listens on port `8901` inside the container and publishes it as port `8901` on the NAS. Other containers on the shared proxy network can reach it as `parentgate:8901`; it is also reachable directly as `http://NAS-IP:8901` for local troubleshooting.
 
 ## Configure Nginx Proxy Manager
 
@@ -37,7 +37,7 @@ Create a Proxy Host with:
 
 - Domain: the hostname used in `APP_BASE_URL`.
 - Scheme: `http`.
-- Forward hostname: `operation-crackdown`.
+- Forward hostname: `parentgate`.
 - Forward port: `8901`.
 - WebSocket support: optional; the current clients use polling.
 - SSL certificate: a valid certificate for the hostname.
@@ -64,7 +64,7 @@ For a simple consistent backup:
 2. Copy the complete `data` directory to the NAS backup destination.
 3. Start the container again.
 
-Do not copy only `crackdown.db` while the container is writing; the current state may also reside in its WAL file.
+Do not copy only `parentgate.db` (or `crackdown.db` on installs created before the rename) while the container is writing; the current state may also reside in its WAL file.
 
 ## Updating
 

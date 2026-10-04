@@ -10,7 +10,7 @@ On the controlled PC, download or copy the `client/windows` directory. Open Powe
 powershell.exe -ExecutionPolicy Bypass -File .\Install.ps1 `
   -ServerUrl "https://focus.example.net" `
   -EnrollmentCode "ABCD-EFGH-JKLM" `
-  -DeviceName "Daughter PC"
+  -DeviceName "Kids PC"
 ```
 
 Version 0.3.0 or newer enables self-updating. After it is installed, the elevated agent checks the enrolled dashboard every five minutes. Normal target, website, timer, message, and policy changes are already data-driven and do not require a client release. For a runtime release, the client accepts only a newer per-device authenticated manifest, verifies every downloaded file by SHA-256, preserves enrollment, and rolls back if the replacement does not report healthy. Updates are deferred whenever whole-internet pause is active.
@@ -24,7 +24,7 @@ The installer:
 
 The parent page listens only on Windows loopback and is not reachable from another device. A parent enters their local PIN there to change this device immediately. The resulting operation is queued durably and synchronized to the NAS dashboard.
 
-The client also places `Operation Crackdown Emergency Restore.cmd` on the public desktop. It requires Windows administrator approval, disables the client task without deleting enrollment, restores the exact saved firewall defaults and outbound allow rules, and removes only Operation Crackdown's managed hosts entries. After using it, restore the device in the dashboard and run `Repair.ps1` as Administrator to re-enable enforcement.
+The client also places `ParentGate Emergency Restore.cmd` on the public desktop. It requires Windows administrator approval, disables the client task without deleting enrollment, restores the exact saved firewall defaults and outbound allow rules, and removes only ParentGate's managed hosts entries. After using it, restore the device in the dashboard and run `Repair.ps1` as Administrator to re-enable enforcement.
 
 ### Enforcement
 
@@ -38,7 +38,7 @@ Hosts-file blocking is best effort and does not support wildcard domains. Servic
 
 ### Uninstall
 
-Run `Uninstall.ps1` as Administrator. It removes the scheduled task, desktop shortcut, client data, and only the hosts-file section owned by Operation Crackdown.
+Run `Uninstall.ps1` as Administrator. It removes the scheduled task, desktop shortcut, client data, and only the hosts-file section owned by ParentGate.
 
 ## Android
 
@@ -49,7 +49,7 @@ The client:
 - Enrolls through the same one-time-code API.
 - Runs a foreground synchronization service.
 - Uses Android's user-approved `VpnService` to route selected blocked packages into a local discard tunnel.
-- Leaves the Operation Crackdown package outside that tunnel so dashboard polling survives.
+- Leaves the ParentGate package outside that tunnel so dashboard polling survives.
 - Reports launcher applications as available targets under Android package-visibility rules.
 - Provides a local parent PIN screen.
 

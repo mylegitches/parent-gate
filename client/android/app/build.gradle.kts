@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.operationcrackdown.client"
+    namespace = "com.parentgate.client"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.operationcrackdown.client"
+        applicationId = "com.parentgate.client"
         minSdk = 26
         targetSdk = 36
         versionCode = 2

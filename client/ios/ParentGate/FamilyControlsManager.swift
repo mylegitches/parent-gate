@@ -7,8 +7,8 @@ import ManagedSettings
 final class FamilyControlsManager: ObservableObject {
     @Published var selection = FamilyActivitySelection()
     @Published var selectionKey = "discord"
-    private let store = ManagedSettingsStore(named: .init("OperationCrackdown"))
-    private let defaults = UserDefaults(suiteName: "group.com.operationcrackdown.client")!
+    private let store = ManagedSettingsStore(named: .init("ParentGate"))
+    private let defaults = UserDefaults(suiteName: "group.com.parentgate.client")!
 
     func authorize() async throws {
         try await AuthorizationCenter.shared.requestAuthorization(for: .child)

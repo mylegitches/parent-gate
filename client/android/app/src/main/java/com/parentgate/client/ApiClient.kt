@@ -1,4 +1,4 @@
-package com.operationcrackdown.client
+package com.parentgate.client
 
 import android.content.Context
 import org.json.JSONArray
@@ -7,7 +7,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 class ApiClient(private val context: Context) {
-    private val preferences = context.getSharedPreferences("operation-crackdown", Context.MODE_PRIVATE)
+    private val preferences = context.getSharedPreferences("parentgate", Context.MODE_PRIVATE)
 
     val enrolled: Boolean get() = preferences.contains("credential")
     val serverUrl: String get() = preferences.getString("serverUrl", "")!!.trimEnd('/')

@@ -14,6 +14,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "OperationCrackdown"
+rootProject.name = "ParentGate"
 include(":app")
 

@@ -1,11 +1,14 @@
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { SERVICE_CATALOG } from './catalog.js';
 
 export function openDatabase(dataDir) {
   mkdirSync(dataDir, { recursive: true });
-  const database = new DatabaseSync(join(dataDir, 'crackdown.db'));
+  // Installs created before the rename keep their original database file.
+  const legacyPath = join(dataDir, 'crackdown.db');
+  const databasePath = existsSync(legacyPath) ? legacyPath : join(dataDir, 'parentgate.db');
+  const database = new DatabaseSync(databasePath);
   database.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
   migrate(database);
   seedCatalog(database);

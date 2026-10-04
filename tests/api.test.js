@@ -25,7 +25,7 @@ async function responseJson(response) {
 }
 
 test('setup, enrollment, direct controls, custom websites, and policy form one working flow', { timeout: 30000 }, async () => {
-  const dataDirectory = mkdtempSync(join(tmpdir(), 'crackdown-api-'));
+  const dataDirectory = mkdtempSync(join(tmpdir(), 'parentgate-api-'));
   const port = 19080 + Math.floor(Math.random() * 800);
   const baseUrl = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, ['src/server.js'], {

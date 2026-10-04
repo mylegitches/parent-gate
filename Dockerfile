@@ -11,10 +11,10 @@ COPY src ./src
 COPY public ./public
 COPY client/windows ./client/windows
 
-RUN addgroup -S crackdown && adduser -S -G crackdown crackdown \
-    && mkdir -p /data && chown -R crackdown:crackdown /app /data
+RUN addgroup -S parentgate && adduser -S -G parentgate parentgate \
+    && mkdir -p /data && chown -R parentgate:parentgate /app /data
 
-USER crackdown
+USER parentgate
 EXPOSE 8901
 VOLUME ["/data"]
 

@@ -12,7 +12,7 @@ struct ContentView: View {
                 if store.enrolled { controls } else { enrollment }
                 Section { Text(store.status).foregroundStyle(.secondary) }
             }
-            .navigationTitle("Operation Crackdown")
+            .navigationTitle("ParentGate")
         }
     }
 
